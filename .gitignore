@@ -1,0 +1,55 @@
+# ==============================================================================
+# Secrets / credentials (NEVER commit to a public repository)
+# ==============================================================================
+.env
+.env.*
+*.env
+*.secret
+*.secrets
+secrets.json
+appsettings.local.json
+appsettings.*.local.json
+
+# Azure / cloud credentials & local auth caches
+.azure/
+*.azureauth
+*.publishsettings
+*.pfx
+*.pem
+*.key
+azureauth.json
+credentials.json
+
+# ==============================================================================
+# Local / editor / OS
+# ==============================================================================
+.vscode/*.local
+.DS_Store
+Thumbs.db
+*.log
+tmp/
+temp/
+.cache/
+
+# ==============================================================================
+# Language / tooling artifacts
+# ==============================================================================
+# Node
+node_modules/
+dist/
+build/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# .NET
+bin/
+obj/
+
+# Terraform / IaC state (may contain sensitive values)
+*.tfstate
+*.tfstate.*
+.terraform/
