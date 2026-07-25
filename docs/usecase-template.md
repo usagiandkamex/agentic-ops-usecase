@@ -1,6 +1,8 @@
 <!--
 ユースケース雛形。
-このファイルをコピーして usecases/<usecase-name>/README.md を作成してください。
+このファイルをコピーして usecases/<NNN>-<usecase-name>/README.md を作成してください（例: usecases/002-xxx/）。
+エージェント/プロンプト/インストラクションの実体は、VS Code が自動検出できる
+.github/{agents,prompts,instructions}/ に `<NNN>-` プレフィックス付きで配置してください。
 角括弧 [ ] の箇所を置き換え、不要なセクションは削除して構いません。
 Public リポジトリのため、実 ID / リソース名 / 個人情報は書かず、プレースホルダを使うこと。
 -->
@@ -27,11 +29,13 @@ Public リポジトリのため、実 ID / リソース名 / 個人情報は書�
 
 ## 利用するエージェント
 
-| 種別 | ファイル | 役割 |
-| --- | --- | --- |
-| チャットモード | `agents/[name].chatmode.md` | [役割] |
-| プロンプト | `prompts/[name].prompt.md` | [役割] |
-| インストラクション | `instructions/[name].instructions.md` | [役割] |
+実体は VS Code が自動検出する `.github/` 配下に `<NNN>-` プレフィックス付きで配置する。
+
+| 種別 | ファイル | VS Code での呼び出し | 役割 |
+| --- | --- | --- | --- |
+| エージェント | `.github/agents/<NNN>-[name].agent.md` | エージェント選択 | [役割] |
+| プロンプト | `.github/prompts/<NNN>-[name].prompt.md` | `/[name]` | [役割] |
+| インストラクション | `.github/instructions/<NNN>-[name].instructions.md` | 自動適用 | [役割] |
 
 ## 手順
 

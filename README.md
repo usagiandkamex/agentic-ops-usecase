@@ -17,31 +17,32 @@ IT 運用（Ops）の実務課題を、GitHub Copilot を中心としたエー�
 ├── README.md                       このファイル(概要とユースケース索引)
 ├── LICENSE                         MIT ライセンス
 ├── CONTRIBUTING.md                 コントリビューションガイド
-├── .github/
-│   └── copilot-instructions.md     リポジトリ共通の Copilot 指針
+├── .github/                        VS Code が自動検出するエージェント群
+│   ├── copilot-instructions.md     リポジトリ共通の Copilot 指針
+│   ├── agents/                     カスタムエージェント (<NNN>-*.agent.md)
+│   ├── prompts/                    プロンプト (<NNN>-*.prompt.md)
+│   └── instructions/               インストラクション (<NNN>-*.instructions.md)
 ├── docs/
 │   └── usecase-template.md         ユースケースの雛形
 └── usecases/
-    └── azure-resource-analysis/    ユースケース: Azure リソース分析
-        ├── README.md
-        ├── agents/                 カスタムチャットモード (*.chatmode.md)
-        ├── prompts/                プロンプトファイル (*.prompt.md)
-        └── instructions/           インストラクション (*.instructions.md)
+    └── 001-azure-resource-analysis/  ユースケースの説明・索引(README)
 ```
+
+> エージェントの実体は VS Code の自動検出仕様に合わせ `.github/` 配下に置き、`<NNN>-` プレフィックスでユースケースを紐付けます。`usecases/<NNN>-<name>/README.md` は人が読むドキュメント（索引）です。
 
 ## 📚 ユースケース一覧
 
 | ユースケース | 概要 | リンク |
 | --- | --- | --- |
-| Azure リソース分析 | 費用・セキュリティ・信頼性・パフォーマンス・アラートの5観点で Azure リソースを分析する | [usecases/azure-resource-analysis](usecases/azure-resource-analysis/README.md) |
+| 001 Azure リソース分析 | 費用・セキュリティ・信頼性・パフォーマンス・アラートの5観点で Azure リソースを分析する | [usecases/001-azure-resource-analysis](usecases/001-azure-resource-analysis/README.md) |
 
 > 新しいユースケースを追加したら、この表に1行追記してください。
 
 ## 🚀 使い方
 
 1. 目的に近いユースケースを上の一覧から選び、その `README.md` を開く。
-2. `agents/` のチャットモードを VS Code の GitHub Copilot Chat で選択する。
-3. `prompts/` のプロンプトファイルを実行し、`instructions/` の指針に沿って分析・運用を進める。
+2. VS Code の GitHub Copilot Chat で対応するエージェント（`.github/agents/`）を選択する。
+3. `/` コマンドでプロンプト（`.github/prompts/`）を実行し、インストラクションの指針に沿って分析・運用を進める。
 
 > VS Code でカスタムチャットモード（`.chatmode.md`）やプロンプトファイル（`.prompt.md`）を利用するには、GitHub Copilot 拡張機能が必要です。
 

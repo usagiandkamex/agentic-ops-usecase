@@ -26,21 +26,28 @@
 
 ## 📁 ディレクトリ構成
 
+VS Code がエージェント/プロンプト/インストラクションを自動検出するのは
+`.github/{agents,prompts,instructions}/` のみです。そのため、実体ファイルは
+`.github/` 配下に置き、ユースケースごとに `<NNN>-` の番号プレフィックスで束ねます。
+`usecases/<NNN>-<name>/README.md` はドキュメント（索引）として実体ファイルへリンクします。
+
 ```text
-docs/                          共通ドキュメント・テンプレート
-usecases/<usecase-name>/       ユースケース単位のフォルダ
-  README.md                    ユースケースの説明
-  agents/                      カスタムチャットモード (*.chatmode.md)
-  prompts/                     プロンプトファイル (*.prompt.md)
-  instructions/                インストラクション (*.instructions.md)
+.github/
+  agents/       <NNN>-*.agent.md          カスタムエージェント(旧チャットモード)
+  prompts/      <NNN>-*.prompt.md         プロンプトファイル
+  instructions/ <NNN>-*.instructions.md   インストラクション
+docs/                                     共通ドキュメント・テンプレート
+usecases/<NNN>-<usecase-name>/
+  README.md                               ユースケースの説明・索引
 ```
 
 ## ➕ 新しいユースケースの追加手順
 
-1. [docs/usecase-template.md](docs/usecase-template.md) をコピーして `usecases/<usecase-name>/README.md` を作成する。
-2. 必要なエージェント（`.chatmode.md`）・プロンプト（`.prompt.md`）・インストラクション（`.instructions.md`）を追加する。
-3. ルートの [README.md](README.md) の「ユースケース一覧」に項目を追記する。
-4. コミット前に機密情報が含まれていないか確認する（下記チェックを推奨）。
+1. 未使用の番号（例: `002`）を決める。
+2. [docs/usecase-template.md](docs/usecase-template.md) をコピーして `usecases/<NNN>-<usecase-name>/README.md` を作成する。
+3. エージェント/プロンプト/インストラクションを `.github/{agents,prompts,instructions}/` に `<NNN>-` 付きで追加する。
+4. ルートの [README.md](README.md) の「ユースケース一覧」に項目を追記する。
+5. コミット前に機密情報が含まれていないか確認する（下記チェックを推奨）。
 
 ```powershell
 # 実 GUID が含まれていないかの簡易チェック (PowerShell)
