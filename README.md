@@ -36,7 +36,7 @@ IT 運用（Ops）の実務課題を、GitHub Copilot を中心としたエー�
 
 | ユースケース | 概要 | リンク |
 | --- | --- | --- |
-| 001 Azure リソース分析 | 費用・セキュリティ・信頼性・パフォーマンス・アラートの5観点で Azure リソースを分析する | [usecases/001-azure-resource-analysis](usecases/001-azure-resource-analysis/README.md) |
+| 001 Azure リソース分析 | Azure Well-Architected Framework の5本柱（信頼性・セキュリティ・コスト最適化・オペレーショナルエクセレンス・パフォーマンス効率）で Azure リソースを分析する | [usecases/001-azure-resource-analysis](usecases/001-azure-resource-analysis/README.md) |
 
 > 新しいユースケースを追加したら、この表に1行追記してください。
 

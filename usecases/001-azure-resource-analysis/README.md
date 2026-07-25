@@ -2,12 +2,12 @@
 
 ## 概要
 
-指定した Azure サブスクリプション / リソースグループ内のリソースを、**費用・セキュリティ・信頼性・パフォーマンス・アラート発生状況** の5観点で分析し、改善に向けた具体的な指摘とアクションを提示する GitHub Copilot ベースのユースケースです。
+指定した Azure リソースを、**信頼性・セキュリティ・コスト最適化・オペレーショナルエクセレンス・パフォーマンス効率** の WAF 5本柱の観点で分析し、改善に向けた具体的な指摘とアクションを提示する GitHub Copilot ベースのユースケースです。
 
 ## 背景 / 課題
 
 - Azure 環境は時間とともにリソースが増え、コストやセキュリティの状態が把握しづらくなる。
-- 各観点（コスト最適化、セキュリティ、信頼性、パフォーマンス、監視）を横断的に確認するには、複数のポータル画面やコマンドを行き来する必要がある。
+- 各観点（信頼性、セキュリティ、コスト最適化、オペレーショナルエクセレンス、パフォーマンス効率）を横断的に確認するには、複数のポータル画面やコマンドを行き来する必要がある。
 - 定期的な棚卸し・レビューが属人化しやすい。
 
 ## 目的 / 期待効果
@@ -37,42 +37,49 @@
 | --- | --- | --- | --- |
 | エージェント | [.github/agents/001-azure-resource-analyst.agent.md](../../.github/agents/001-azure-resource-analyst.agent.md) | エージェント選択 `azure-resource-analyst` | Azure リソース分析に特化したエージェント |
 | インストラクション | [.github/instructions/001-azure-ops.instructions.md](../../.github/instructions/001-azure-ops.instructions.md) | 自動適用 | Azure 分析時の共通ルール（読み取り専用・プレースホルダ化など） |
-| プロンプト（費用） | [.github/prompts/001-cost-analysis.prompt.md](../../.github/prompts/001-cost-analysis.prompt.md) | `/azure-cost-analysis` | コスト最適化の観点で分析 |
-| プロンプト（セキュリティ） | [.github/prompts/001-security-analysis.prompt.md](../../.github/prompts/001-security-analysis.prompt.md) | `/azure-security-analysis` | セキュリティの観点で分析 |
 | プロンプト（信頼性） | [.github/prompts/001-reliability-analysis.prompt.md](../../.github/prompts/001-reliability-analysis.prompt.md) | `/azure-reliability-analysis` | 信頼性・可用性の観点で分析 |
-| プロンプト（パフォーマンス） | [.github/prompts/001-performance-analysis.prompt.md](../../.github/prompts/001-performance-analysis.prompt.md) | `/azure-performance-analysis` | パフォーマンス効率の観点で分析 |
-| プロンプト（アラート） | [.github/prompts/001-alert-analysis.prompt.md](../../.github/prompts/001-alert-analysis.prompt.md) | `/azure-alert-analysis` | アラート発生状況・監視構成の観点で分析 |
+| プロンプト（セキュリティ） | [.github/prompts/001-security-analysis.prompt.md](../../.github/prompts/001-security-analysis.prompt.md) | `/azure-security-analysis` | セキュリティの観点で分析 |
+| プロンプト（コスト最適化） | [.github/prompts/001-cost-analysis.prompt.md](../../.github/prompts/001-cost-analysis.prompt.md) | `/azure-cost-analysis` | コスト最適化の観点で分析 |
+| プロンプト（オペレーショナルエクセレンス） | [.github/prompts/001-opex-analysis.prompt.md](../../.github/prompts/001-opex-analysis.prompt.md) | `/azure-opex-analysis` | 監視・ガバナンス・運用性の観点で分析 |
+| プロンプト（パフォーマンス効率） | [.github/prompts/001-performance-analysis.prompt.md](../../.github/prompts/001-performance-analysis.prompt.md) | `/azure-performance-analysis` | パフォーマンス効率の観点で分析 |
 
 ## 手順
 
 1. VS Code の GitHub Copilot Chat で、エージェント **`azure-resource-analyst`** を選択する。
-2. 分析対象を指定する（例: サブスクリプション `<SUBSCRIPTION_ID>`、リソースグループ `<RESOURCE_GROUP>`）。
-3. 目的の観点に応じてプロンプトを実行する（例: `/azure-cost-analysis`）。5観点すべてを順に実行してもよい。
+2. 分析対象を指定する。分析は **RG 単位** で、対象範囲は「**単一のリソースグループ**（テナント/サブスクリプション/RG を指定）」または「**サブスクリプション配下の全リソースグループ**（テナント/サブスクリプションを指定）」のいずれか。未指定なら実行時にどちらかを確認される（例: `<TENANT_ID>` / `<SUBSCRIPTION_ID>` / `<RESOURCE_GROUP>`）。
+3. **エージェントと「対象リソース」と「評価観点」を同意する（必須）**。エージェントは、対象（分析範囲＝単一 RG か全 RG か・テナント/サブスク/RG）と評価観点（5観点のうち実施分）を提示し、**利用者が同意したものだけ**を、同意後に収集・分析する。観点別プロンプト（例: `/azure-cost-analysis`）を使ってもよい。
 4. エージェントが Azure MCP（または `az`）で情報を収集し、観点ごとに指摘・優先度・推奨アクションを提示する。
 5. エージェントがレポート（HTML）を生成し、**保存前にレビュー**（プレースホルダ残存・根拠リンク・サマリ整合）してから `reports/` に保存する。
 6. 結果をレビューし、必要な改善タスクを起票する。
 
 ## 出力例
 
-各観点は、テーブルの上に **サマリ（スコア・優先度比率バー・件数）** を付けて出力します。
-複数観点をまとめて実行した場合は、レポート冒頭に総合サマリ（Overview）が付きます。
+評価は「達成度」ではなく **ベストプラクティス準拠率（カバレッジ%）＋評価ラベル** で示します（WAF のトレードオフを考慮し、100点型の達成度は用いません）。各観点に **できている点（強み）** と 改善点（トレードオフ付き）を併記します。
+
+HTML レポートは **Azure Portal 風デザイン** で、次のテンプレートを土台に生成されます。
+
+- [report-template/index.html](report-template/index.html): ダッシュボード（総合準拠率のドーナツ＋各ピラーカード→詳細ページへのリンク）
+- [report-template/pillar.html](report-template/pillar.html): ピラーごとの詳細（準拠率・強み・改善点・トレードオフ）
+- [report-template/architecture.html](report-template/architecture.html): インライン SVG のシステム構成図
+
+下記はピラー詳細の内容イメージ（Markdown 表記）です。
 
 ```markdown
-### 費用（Cost） サマリ
-- スコア: 68 / 100 🟡 要改善
-- 優先度比率: 🟥🟥🟧🟧🟧🟩🟩🟩🟩🟩 （高20% / 中30% / 低50%）
-- 指摘件数: 高 2 / 中 3 / 低 5（計 10）
+## コスト最適化 (Cost Optimization)
+- 準拠率: 76%（19/25 項目）🟡 要改善
 
-| 優先度 | リソース種別 | 指摘 | 推奨アクション | 根拠（参考） |
-| --- | --- | --- | --- | --- |
-| 高 | Virtual Machine | 停止中だが割り当て済みで課金が継続している VM が存在 | 不要なら割り当て解除(deallocate)または削除 | [WAF: コスト最適化](https://learn.microsoft.com/azure/well-architected/cost-optimization/) |
-| 中 | Managed Disk | どの VM にも接続されていない未使用ディスク | 不要なら削除、必要ならスナップショット化 | [WAF: コスト最適化](https://learn.microsoft.com/azure/well-architected/cost-optimization/) |
-| 低 | Public IP | 未関連付けの Standard Public IP | 不要なら解放 | [WAF: コスト最適化](https://learn.microsoft.com/azure/well-architected/cost-optimization/) |
+### できている点（強み）
+- 予約割引を一部の VM に適用済み
+- 開発環境に自動シャットダウンを設定済み
 
-推定削減額: 概算 XX% / 月（実値は環境により異なります）
+### 改善点
+| 優先度 | 対象 | 指摘 | 推奨アクション | トレードオフ | 根拠（参考） |
+| --- | --- | --- | --- | --- | --- |
+| 中 | Log Analytics | 日次取り込み上限が未設定 | Daily Cap を設定 | 監視データ欠損のリスク（運用性と相反） | [WAF: コスト最適化](https://learn.microsoft.com/azure/well-architected/cost-optimization/) |
+| 低 | Managed Disk | 未使用ディスク | 削除またはスナップショット化 | 復旧元データを失う可能性 | [WAF: コスト最適化](https://learn.microsoft.com/azure/well-architected/cost-optimization/) |
 ```
 
-> 生成されたレポートは `reports/azure-resource-analysis_<YYYYMMDD-HHmmss>.html` に保存されます（同日複数回でも上書きされません）。このディレクトリは `.gitignore` 済み（ローカル限定）のため、レポート内ではプレースホルダではなく **実際の ID・リソース名** を記載します（上記のサンプルは公開用のためプレースホルダ表記）。シークレット等の機微情報はローカルでも記載しません。
+> 生成されたレポートは `reports/azure-resource-analysis_<YYYYMMDD-HHmmss>/`（フォルダ）に保存されます（`index.html`（ダッシュボード）＋ 各ピラー `reliability/security/cost/opex/performance.html`＋ `architecture.html`。同日複数回でも上書きされません）。このフォルダは `.gitignore` 済み（ローカル限定）のため、レポート内ではプレースホルダではなく **実際の ID・リソース名** を記載します（上記のサンプルは公開用のため一般化）。シークレット等の機微情報はローカルでも記載しません。
 
 ## 注意事項
 

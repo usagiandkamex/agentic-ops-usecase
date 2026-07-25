@@ -1,13 +1,13 @@
 ---
 name: 'azure-cost-analysis'
-description: 'Azure リソースを費用（コスト最適化）の観点で読み取り専用分析する。'
+description: 'Azure リソースをコスト最適化の観点で読み取り専用分析する。'
 agent: 'azure-resource-analyst'
 ---
 
-# 費用分析（Cost Analysis）
+# コスト最適化分析（Cost Optimization Analysis）
 
-対象の Azure サブスクリプション / リソースグループを **コスト最適化** の観点で分析してください。
-分析対象が未指定の場合は、現在設定されているサブスクリプション/リソースグループを確認して提示し、承認を得てから分析します。
+対象の Azure リソースを **コスト最適化** の観点で分析してください。
+分析は RG 単位で行います。対象は「テナント/サブスクリプション/RG（単一RG）」または「テナント/サブスクリプション（配下の全RG）」の2パターンです。未確定の場合は、現在のコンテキストを提示してどちらの対象かを確認し、承認を得てから分析します。
 
 ## 収集する情報（読み取り専用）
 
@@ -24,17 +24,17 @@ agent: 'azure-resource-analyst'
 分析は **Azure Well-Architected Framework（コスト最適化）** に則って行い、
 次の列を持つ表で、優先度順に指摘を示してください。
 
-表の**直前にサマリブロック**を付ける：スコア（0–100 と評価バンド 🟢良好80–100 / 🟡要改善50–79 / 🔴要対応0–49）、
-優先度比率バー（10セルの絵文字 🟥=高 🟧=中 🟩=低）、指摘件数（高/中/低と合計）を表示する。
+表の直前に **準拠率（カバレッジ%）＋評価ラベル**（🟢良好80–100% / 🟡要改善50–79% / 🔴要対応0–49%。達成度ではない）と、改善点の優先度比率・件数を示す。
+また **できている点（強み）** を必ず併記する（実構成の根拠に基づき、推測しない）。
 
-| 優先度 | リソース種別 | 指摘 | 推奨アクション | 根拠（参考） |
-| --- | --- | --- | --- | --- |
+| 優先度 | リソース種別 | 指摘 | 推奨アクション | トレードオフ | 根拠（参考） |
+| --- | --- | --- | --- | --- | --- |
 
-「根拠（参考）」には、その指摘の根拠となる **WAF または Microsoft Learn のページ**を記載。
-一般的な参照先: <https://learn.microsoft.com/azure/well-architected/cost-optimization/>
+「根拠（参考）」には、その指摘に**強く関連する具体的な WAF/Microsoft Learn のガイド**（柱のトップページではなく、チェックリスト項目のガイド等）を記載。
+一般的な参照先: <https://learn.microsoft.com/azure/well-architected/cost-optimization/> （チェックリスト: <https://learn.microsoft.com/azure/well-architected/cost-optimization/checklist>）
 
 最後に、想定される削減効果を **概算（目安）** として述べ、次に着手すべき項目を優先順位付きでまとめてください。
-分析結果は `usecases/001-azure-resource-analysis/reports/azure-resource-analysis_<YYYYMMDD-HHmmss>.html` に保存します（ローカル限定なので `<...>` は実値に置換。保存前にプレースホルダ残存・根拠リンク・サマリ整合をレビュー。同日複数回でも上書きせず、コミットはしない）。
+分析結果は `usecases/001-azure-resource-analysis/reports/azure-resource-analysis_<YYYYMMDD-HHmmss>/`（フォルダ）に保存します（ダッシュボード `index.html`＋この観点の詳細ページ＋構成図 `architecture.html`）。ローカル限定なので `<...>` は実値に置換。保存前にプレースホルダ残存・根拠リンク・強み/トレードオフ・サマリ整合をレビュー。同日複数回でも上書きせず、コミットはしない。
 
 ## 注意
 
