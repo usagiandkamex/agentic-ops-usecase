@@ -27,37 +27,48 @@
 
 ## 利用するエージェント
 
-| 種別 | ファイル | 役割 |
-| --- | --- | --- |
-| チャットモード | [agents/azure-resource-analyst.chatmode.md](agents/azure-resource-analyst.chatmode.md) | Azure リソース分析に特化した対話モード |
-| インストラクション | [instructions/azure-ops.instructions.md](instructions/azure-ops.instructions.md) | Azure 分析時の共通ルール（読み取り専用・プレースホルダ化など） |
-| プロンプト（費用） | [prompts/cost-analysis.prompt.md](prompts/cost-analysis.prompt.md) | コスト最適化の観点で分析 |
-| プロンプト（セキュリティ） | [prompts/security-analysis.prompt.md](prompts/security-analysis.prompt.md) | セキュリティの観点で分析 |
-| プロンプト（信頼性） | [prompts/reliability-analysis.prompt.md](prompts/reliability-analysis.prompt.md) | 信頼性・可用性の観点で分析 |
-| プロンプト（パフォーマンス） | [prompts/performance-analysis.prompt.md](prompts/performance-analysis.prompt.md) | パフォーマンス効率の観点で分析 |
-| プロンプト（アラート） | [prompts/alert-analysis.prompt.md](prompts/alert-analysis.prompt.md) | アラート発生状況・監視構成の観点で分析 |
+エージェント/プロンプト/インストラクションの実体は、VS Code が自動検出できるよう
+リポジトリ直下の `.github/` 配下に配置しています（本ユースケースは `001-` プレフィックスで識別）。
+
+| 種別 | ファイル | VS Code での呼び出し | 役割 |
+| --- | --- | --- | --- |
+| エージェント | [.github/agents/001-azure-resource-analyst.agent.md](../../.github/agents/001-azure-resource-analyst.agent.md) | エージェント選択 `azure-resource-analyst` | Azure リソース分析に特化したエージェント |
+| インストラクション | [.github/instructions/001-azure-ops.instructions.md](../../.github/instructions/001-azure-ops.instructions.md) | 自動適用 | Azure 分析時の共通ルール（読み取り専用・プレースホルダ化など） |
+| プロンプト（費用） | [.github/prompts/001-cost-analysis.prompt.md](../../.github/prompts/001-cost-analysis.prompt.md) | `/azure-cost-analysis` | コスト最適化の観点で分析 |
+| プロンプト（セキュリティ） | [.github/prompts/001-security-analysis.prompt.md](../../.github/prompts/001-security-analysis.prompt.md) | `/azure-security-analysis` | セキュリティの観点で分析 |
+| プロンプト（信頼性） | [.github/prompts/001-reliability-analysis.prompt.md](../../.github/prompts/001-reliability-analysis.prompt.md) | `/azure-reliability-analysis` | 信頼性・可用性の観点で分析 |
+| プロンプト（パフォーマンス） | [.github/prompts/001-performance-analysis.prompt.md](../../.github/prompts/001-performance-analysis.prompt.md) | `/azure-performance-analysis` | パフォーマンス効率の観点で分析 |
+| プロンプト（アラート） | [.github/prompts/001-alert-analysis.prompt.md](../../.github/prompts/001-alert-analysis.prompt.md) | `/azure-alert-analysis` | アラート発生状況・監視構成の観点で分析 |
 
 ## 手順
 
-1. VS Code の GitHub Copilot Chat で、チャットモード **`Azure Resource Analyst`** を選択する。
+1. VS Code の GitHub Copilot Chat で、エージェント **`azure-resource-analyst`** を選択する。
 2. 分析対象を指定する（例: サブスクリプション `<SUBSCRIPTION_ID>`、リソースグループ `<RESOURCE_GROUP>`）。
-3. 目的の観点に応じてプロンプトを実行する（例: `/cost-analysis`）。5観点すべてを順に実行してもよい。
+3. 目的の観点に応じてプロンプトを実行する（例: `/azure-cost-analysis`）。5観点すべてを順に実行してもよい。
 4. エージェントが Azure MCP（または `az`）で情報を収集し、観点ごとに指摘・優先度・推奨アクションを提示する。
 5. 結果をレビューし、必要な改善タスクを起票する。
 
 ## 出力例
 
-```markdown
-## 費用分析レポート (サブスクリプション: <SUBSCRIPTION_ID>)
+各観点は、テーブルの上に **サマリ（スコア・優先度比率バー・件数）** を付けて出力します。
+複数観点をまとめて実行した場合は、レポート冒頭に総合サマリ（Overview）が付きます。
 
-| 優先度 | リソース種別 | 指摘 | 推奨アクション |
-| --- | --- | --- | --- |
-| 高 | Virtual Machine | 停止中だが割り当て済みで課金が継続している VM が存在 | 不要なら割り当て解除(deallocate)または削除 |
-| 中 | Managed Disk | どの VM にも接続されていない未使用ディスク | 不要なら削除、必要ならスナップショット化 |
-| 低 | Public IP | 未関連付けの Standard Public IP | 不要なら解放 |
+```markdown
+### 費用（Cost） サマリ
+- スコア: 68 / 100 🟡 要改善
+- 優先度比率: 🟥🟥🟧🟧🟧🟩🟩🟩🟩🟩 （高20% / 中30% / 低50%）
+- 指摘件数: 高 2 / 中 3 / 低 5（計 10）
+
+| 優先度 | リソース種別 | 指摘 | 推奨アクション | 根拠（参考） |
+| --- | --- | --- | --- | --- |
+| 高 | Virtual Machine | 停止中だが割り当て済みで課金が継続している VM が存在 | 不要なら割り当て解除(deallocate)または削除 | [WAF: コスト最適化](https://learn.microsoft.com/azure/well-architected/cost-optimization/) |
+| 中 | Managed Disk | どの VM にも接続されていない未使用ディスク | 不要なら削除、必要ならスナップショット化 | [WAF: コスト最適化](https://learn.microsoft.com/azure/well-architected/cost-optimization/) |
+| 低 | Public IP | 未関連付けの Standard Public IP | 不要なら解放 | [WAF: コスト最適化](https://learn.microsoft.com/azure/well-architected/cost-optimization/) |
 
 推定削減額: 概算 XX% / 月（実値は環境により異なります）
 ```
+
+> 生成されたレポートは `reports/azure-resource-analysis_<YYYYMMDD-HHmmss>.md` に保存されます（同日複数回でも上書きされません）。このディレクトリは `.gitignore` 済みで、実環境データを含むためコミットされません。
 
 ## 注意事項
 

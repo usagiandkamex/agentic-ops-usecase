@@ -1,0 +1,3 @@
+# このディレクトリには分析レポート(*.md)が生成されます。
+# レポートは実環境のデータを含むため .gitignore で除外され、コミットされません。
+# This directory holds generated analysis reports. Reports are gitignored (never committed).

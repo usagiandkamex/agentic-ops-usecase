@@ -53,3 +53,9 @@ obj/
 *.tfstate
 *.tfstate.*
 .terraform/
+
+# ==============================================================================
+# Generated analysis reports (contain real environment data — DO NOT commit)
+# ==============================================================================
+usecases/**/reports/*
+!usecases/**/reports/.gitkeep

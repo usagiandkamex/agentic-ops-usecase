@@ -1,5 +1,5 @@
 ---
-applyTo: 'usecases/azure-resource-analysis/**'
+applyTo: 'usecases/001-azure-resource-analysis/**'
 ---
 
 # Azure リソース分析 共通インストラクション
@@ -11,6 +11,13 @@ applyTo: 'usecases/azure-resource-analysis/**'
 - **Azure MCP ツールを優先** して情報を取得する。
 - Azure MCP が使えない場合は **Azure CLI (`az`)** の同等コマンドを代替として提示する。
 - 取得は照会系（list / show / query）に限定し、**書き込み・変更・削除は行わない**。
+
+## 対象スコープの確認
+
+- 分析対象（サブスクリプション / リソースグループ）が未指定の場合は、**現在設定されている
+  コンテキストを確認**し（Azure MCP、または `az account show` / `az configure --list-defaults`）、
+  その内容を利用者に提示する。
+- **利用者の承認を得てから分析を実行**する。承認前にはデータ収集・分析を開始しない。
 
 ## 安全性
 
@@ -30,6 +37,16 @@ applyTo: 'usecases/azure-resource-analysis/**'
 
 ## 出力
 
-- 観点ごとに「優先度 / 対象 / 指摘 / 推奨アクション」を表形式で示す。
+- 観点ごとに「優先度 / 対象 / 指摘 / 推奨アクション / 根拠(参考)」を表形式で示す。
+- 分析は **Azure Well-Architected Framework（WAF）** に準拠し、各指摘には原則として
+  根拠となる **WAF または Microsoft Learn のページ** を参考情報として明記する。
 - コスト・メトリクスは環境依存のため「概算 / 目安」と明記する。
 - 最後に観点横断のサマリと次アクションの優先順位を簡潔にまとめる。
+
+## レポートの保存
+
+- 分析完了後、結果を Markdown ファイルとして
+  `usecases/001-azure-resource-analysis/reports/` に保存する。
+- ファイル名は `azure-resource-analysis_<YYYYMMDD-HHmmss>.md`（秒まで含め、同日複数回でも上書きしない）。
+- **1回のエージェント実行 = 1ファイル**（扱った観点をまとめる）。
+- このディレクトリは `.gitignore` 済み。実環境データを含むためコミットしない。
