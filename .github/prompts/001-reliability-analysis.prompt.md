@@ -7,7 +7,7 @@ agent: 'azure-resource-analyst'
 # 信頼性分析（Reliability Analysis）
 
 対象の Azure サブスクリプション / リソースグループを **信頼性・可用性** の観点で分析してください。
-未指定の場合は分析対象（`<SUBSCRIPTION_ID>` / `<RESOURCE_GROUP>`）を最初に確認します。
+分析対象が未指定の場合は、現在設定されているサブスクリプション/リソースグループを確認して提示し、承認を得てから分析します。
 
 ## 収集する情報（読み取り専用）
 
@@ -24,7 +24,7 @@ agent: 'azure-resource-analyst'
 分析は **Azure Well-Architected Framework（信頼性）** に則って行い、
 次の列を持つ表で、影響の大きい順に指摘を示してください。
 
-表の**直前にサマリブロック**を付ける：スコア（0–100 と評価バンド 🟢良好80–100 / 🟡要改唄50–79 / 🔴要対几0–49）、
+表の**直前にサマリブロック**を付ける：スコア（0–100 と評価バンド 🟢良好80–100 / 🟡要改善50–79 / 🔴要対応0–49）、
 優先度比率バー（10セルの絵文字 🟥=高 🟧=中 🟩=低）、指摘件数（高/中/低と合計）を表示する。
 
 | 優先度 | リソース種別 | 指摘 | 推奨アクション | 根拠（参考） |
@@ -34,9 +34,9 @@ agent: 'azure-resource-analyst'
 一般的な参照先: <https://learn.microsoft.com/azure/well-architected/reliability/>
 
 最後に、可用性リスクの要約と、優先的に対処すべき項目をまとめてください。
-分析結果は `usecases/001-azure-resource-analysis/reports/azure-resource-analysis_<YYYYMMDD-HHmmss>.md` に保存します（同日複数回でも上書きせず、コミットはしない）。
+分析結果は `usecases/001-azure-resource-analysis/reports/azure-resource-analysis_<YYYYMMDD-HHmmss>.html` に保存します（ローカル限定なので `<...>` は実値に置換。保存前にプレースホルダ残存・根拠リンク・サマリ整合をレビュー。同日複数回でも上書きせず、コミットはしない）。
 
 ## 注意
 
 - 破壊的操作や構成変更は行わず、推奨アクションの提示に留める。
-- 実 ID・リソース名を含めず、プレースホルダを使用する。
+- リポジトリにコミットするドキュメントでは実 ID・リソース名を含めずプレースホルダを使う（ローカル保存のレポートは実値可、シークレットは除く）。
