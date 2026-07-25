@@ -1,0 +1,20 @@
+{
+  // Azure MCP Server definition (committed for public sharing / opt-in use).
+  // VS Code asks for confirmation before starting the server; it is not forced.
+  //
+  // Prerequisite: authenticate to Azure first, e.g. `az login`.
+  // The server discovers your local Azure credentials (Azure CLI / VS Code, etc.).
+  //
+  // Docs: https://learn.microsoft.com/azure/developer/azure-mcp-server/
+  "servers": {
+    "Azure MCP Server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@azure/mcp@latest",
+        "server",
+        "start"
+      ]
+    }
+  }
+}

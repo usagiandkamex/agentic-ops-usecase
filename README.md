@@ -22,6 +22,8 @@ IT 運用（Ops）の実務課題を、GitHub Copilot を中心としたエー�
 │   ├── agents/                     カスタムエージェント (<NNN>-*.agent.md)
 │   ├── prompts/                    プロンプト (<NNN>-*.prompt.md)
 │   └── instructions/               インストラクション (<NNN>-*.instructions.md)
+├── .vscode/
+│   └── mcp.json                    Azure MCP Server の定義(共有用・オプトイン)
 ├── docs/
 │   └── usecase-template.md         ユースケースの雛形
 └── usecases/
