@@ -4,18 +4,20 @@
   Azure Resource Analysis Report — HTML template (Azure Portal-inspired).
 
   使い方 / Usage:
-  - エージェント(azure-resource-analyst)がこの index.html テンプレートを土台にレポート本体を生成する。
-  - 出力は「フォルダ単位」: reports/azure-resource-analysis_<YYYYMMDD-HHmmss>/index.html + architecture.html。
+  - エージェント(azure-resource-analyst)はこの index.html を そのまま複製し、下記トークンを実値に置換 してレポートを生成する（HTML を自作しない）。
+  - 出力は「フォルダ単位」: reports/<YYYYMMDD-HHmmss>/index.html + 各ピラー + architecture.html。
     (.gitignore 済み・ローカル限定。フォルダごと無視される)
-  - このテンプレート自体は公開ファイルのため、値はプレースホルダ/サンプル。
-    生成レポートでは <SUBSCRIPTION_ID> 等を実値に置換し、扱った観点分の <details class="pillar"> を複製する。
-  - 各観点は <details>/<summary> で折り畳み可能。システム構成図は architecture.html に分離。
-  - 自己完結型 (外部依存なし・インライン CSS)。ダブルクリックでブラウザ表示できる。
+  - このテンプレート自体は公開ファイルのため、値はトークン/サンプル。
+  - BEGIN X / END X の区域は、内部の行を雛形に実データで複製/置換する。
+  - スタイル定義・クラス名・HTML 構造は変えない。自己完結型 (外部依存なし・インライン CSS)。
 
-  データ差し込みポイント (agent が置換):
-  - メタ情報 : 分析日時 / 分析範囲（単一 RG かサブスクリプション全体かを平易に） / テナント / サブスク / RG / 観点 / 収集手段
-  - Overview : 総合準拠率(ドーナツ) + 各ピラーカード（詳細ページへのリンク）
-  - 各観点 <details class="pillar"> : スコア・比率・件数・指摘テーブル
+  差し替え項目一覧 (agent が実値に置換。トークンは二重波括弧で囲む):
+  - メタ : META_DATETIME=分析日時 / META_SCOPE=分析範囲 / TENANT_ID / SUBSCRIPTION_NAME=サブスク名 /
+           SUBSCRIPTION_ID / RESOURCE_GROUP / HANDLED_PILLARS=扱った観点 / COLLECTION_METHOD=収集手段
+  - テナントは **ID のみ**（確実な名称が無ければ推定名を書かない）。サブスクは「名称 ID」形式。ID は code 要素で囲む。
+  - 総合ゲージ: gauge の style="--val:.. --col:.." を総合準拠率と色(var(--good|warn|bad))に、TOTAL_VAL/TOTAL_PILL_CLASS/TOTAL_LABEL を置換
+  - STRENGTHS_HIGHLIGHT=総合サマリ直下「総評」の端的な要約(1〜2文)
+  - 区域 : BEGIN PILLAR_CARDS=観点カード / BEGIN TOP_ISSUES=主な改善点行 (内部の行形式を雛形に実データで複製)
 -->
 <html lang="ja">
 <head>
@@ -176,11 +178,11 @@
   <section class="meta">
     <div><span class="k">分析日時</span>{{META_DATETIME}}</div>
     <div><span class="k">分析範囲</span>{{META_SCOPE}}</div>
-    <div><span class="k">テナント</span><code>&lt;TENANT_ID&gt;</code></div>
-    <div><span class="k">サブスクリプション</span><code>&lt;SUBSCRIPTION_ID&gt;</code></div>
-    <div><span class="k">リソースグループ</span><code>&lt;RESOURCE_GROUP&gt;</code></div>
-    <div><span class="k">扱った観点</span>信頼性 / セキュリティ / コスト最適化 / オペレーショナルエクセレンス / パフォーマンス効率</div>
-    <div><span class="k">収集手段</span>Azure MCP / Azure CLI (照会系のみ)</div>
+    <div><span class="k">テナント</span><code>{{TENANT_ID}}</code></div>
+    <div><span class="k">サブスクリプション</span>{{SUBSCRIPTION_NAME}} <code>{{SUBSCRIPTION_ID}}</code></div>
+    <div><span class="k">リソースグループ</span><code>{{RESOURCE_GROUP}}</code></div>
+    <div><span class="k">扱った観点</span>{{HANDLED_PILLARS}}</div>
+    <div><span class="k">収集手段</span>{{COLLECTION_METHOD}}</div>
   </section>
 
   <div class="note">評価は「達成度」ではなく <strong>ベストプラクティス準拠率（カバレッジ%）</strong> です（🟢良好80–100% / 🟡要改善50–79% / 🔴要対応0–49%）。WAF は柱間にトレードオフがあるため、改善は他の柱への影響とあわせて検討してください。コスト・メトリクスは概算です。</div>
@@ -192,15 +194,15 @@
   <div class="overview">
     <div class="total-card">
       <div class="gauge" style="--val:69; --col:var(--warn);">
-        <span class="val"><b>69</b><small>%</small></span>
+        <span class="val"><b>{{TOTAL_VAL}}</b><small>%</small></span>
       </div>
       <div class="total-meta">
         <h3>総合準拠率（平均）</h3>
-        <span class="pill warn">要改善</span>
+        <span class="pill {{TOTAL_PILL_CLASS}}">{{TOTAL_LABEL}}</span>
       </div>
     </div>
     <div class="pillar-grid">
-      <!-- 観点カード: 各観点1枚 (WAF 正規順) -->
+      <!-- BEGIN PILLAR_CARDS : 観点カード。WAF 正規順。実施した観点のみ残し、値を実データに置換 -->
       <a class="pcard" href="reliability.html" style="border-top-color:var(--good)">
         <div class="name">信頼性</div>
         <div class="score">80% <span class="pill good">良好</span></div>
@@ -226,7 +228,14 @@
         <div class="score">74% <span class="pill warn">要改善</span></div>
         <div class="counts">改善点 高 1 / 中 2 / 低 2</div>
       </a>
+      <!-- END PILLAR_CARDS -->
     </div>
+  </div>
+
+  <!-- 総評（全観点の強みを端的に要約） -->
+  <div style="background:var(--az-card);border:1px solid var(--az-border);border-radius:8px;box-shadow:var(--shadow);padding:16px 20px;margin-top:20px">
+    <h3 style="font-size:15px;margin:0 0 8px;padding-left:9px;border-left:4px solid var(--good)">総評</h3>
+    <p style="margin:0;font-size:13px">{{STRENGTHS_HIGHLIGHT}}</p>
   </div>
 
   <!-- ===== 観点別詳細 — 観点ごとに <details class="pillar"> を複製 (WAF 正規順) ===== -->
@@ -237,17 +246,19 @@
       <tr><th>優先度</th><th>観点</th><th>対象</th><th>指摘内容</th><th>詳細</th></tr>
     </thead>
     <tbody>
-      <tr><td class="prio high">高</td><td>セキュリティ</td><td>Storage (stprod)</td><td>パブリックアクセスが有効</td><td><a href="security.html">詳細を開く</a></td></tr>
-      <tr><td class="prio high">高</td><td>セキュリティ</td><td>NSG</td><td>SSH(22) がインターネットへ全開放</td><td><a href="security.html">詳細を開く</a></td></tr>
-      <tr><td class="prio mid">中</td><td>オペレーショナルエクセレンス</td><td>複数リソース</td><td>診断設定が未送信のリソースあり</td><td><a href="opex.html">詳細を開く</a></td></tr>
-      <tr><td class="prio mid">中</td><td>コスト最適化</td><td>Log Analytics</td><td>日次取り込み上限 (Daily Cap) 未設定</td><td><a href="cost.html">詳細を開く</a></td></tr>
-      <tr><td class="prio mid">中</td><td>信頼性</td><td>Storage (stprod)</td><td>冗長性が LRS（地理冗長なし）</td><td><a href="reliability.html">詳細を開く</a></td></tr>
+      <!-- BEGIN TOP_ISSUES : 全観点の高優先度の課題を抽粋。下記行形式を雛形に実データで複製 -->
+      <tr><td class="prio high">高</td><td>セキュリティ</td><td>Storage (stprod)</td><td>パブリックアクセスが有効</td><td><a href="security.html">詳細ページ</a></td></tr>
+      <tr><td class="prio high">高</td><td>セキュリティ</td><td>NSG</td><td>SSH(22) がインターネットへ全開放</td><td><a href="security.html">詳細ページ</a></td></tr>
+      <tr><td class="prio mid">中</td><td>オペレーショナルエクセレンス</td><td>複数リソース</td><td>診断設定が未送信のリソースあり</td><td><a href="opex.html">詳細ページ</a></td></tr>
+      <tr><td class="prio mid">中</td><td>コスト最適化</td><td>Log Analytics</td><td>日次取り込み上限 (Daily Cap) 未設定</td><td><a href="cost.html">詳細ページ</a></td></tr>
+      <tr><td class="prio mid">中</td><td>信頼性</td><td>Storage (stprod)</td><td>冗長性が LRS（地理冗長なし）</td><td><a href="reliability.html">詳細ページ</a></td></tr>
+      <!-- END TOP_ISSUES -->
     </tbody>
   </table>
 
   <!-- ===== 観点別の詳細ページ ===== -->
   <h2 class="section-title">観点別の詳細</h2>
-  <p>各観点の詳細（<strong>できている点（強み）</strong>・改善点・トレードオフ）は、上のカードまたは下のリンクから個別ページを参照してください。</p>
+  <p>各観点の詳細（できている点（強み）・改善点・トレードオフ）は、上のカードまたは下のリンクから個別ページを参照してください。</p>
   <ul>
     <li><a href="reliability.html">信頼性 (Reliability)</a></li>
     <li><a href="security.html">セキュリティ (Security)</a></li>

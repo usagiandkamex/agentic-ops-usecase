@@ -34,7 +34,7 @@ agent: 'azure-resource-analyst'
 一般的な参照先: <https://learn.microsoft.com/azure/well-architected/security/> （チェックリスト: <https://learn.microsoft.com/azure/well-architected/security/checklist>）
 
 最後に、重大リスクの要約と、優先的に対処すべき項目をまとめてください。
-分析結果は `usecases/001-azure-resource-analysis/reports/azure-resource-analysis_<YYYYMMDD-HHmmss>/`（フォルダ）に保存します（ダッシュボード `index.html`＋この観点の詳細ページ＋構成図 `architecture.html`）。ローカル限定なので `<...>` は実値に置換。保存前にプレースホルダ残存・根拠リンク・強み/トレードオフ・サマリ整合をレビュー。同日複数回でも上書きせず、コミットはしない。
+分析結果は `usecases/001-azure-resource-analysis/reports/<YYYYMMDD-HHmmss>/`（フォルダ）に保存します（ダッシュボード `index.html`＋この観点の詳細ページ＋構成図 `architecture.html`）。ローカル限定なので `<...>` は実値に置換。保存前にプレースホルダ残存・根拠リンク・強み/トレードオフ・サマリ整合をレビュー。同日複数回でも上書きせず、コミットはしない。
 
 ## 注意
 

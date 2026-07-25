@@ -33,6 +33,12 @@ applyTo: '**'
 - `usecases/<name>/` : ユースケース単位。`agents/`（チャットモード）、
   `prompts/`（プロンプト）、`instructions/`（インストラクション）を含む。
 
+## レポート出力の固定仕様（ユースケース 001）
+
+- 出力先は `usecases/001-azure-resource-analysis/reports/<YYYYMMDD-HHmmss>/`。
+- 構成は `index.html` ＋ 各ピラー（`reliability/security/cost/opex/performance.html`）＋ `architecture.html`。
+- レポートは `report-template/*.html` を **読み込んで複製し `{{TOKEN}}` を置換**して作る。HTML を自作・スクリプト生成しない（`Copy-Item` 等のシェルコピーで作らず、置換後の完成 HTML を書き出す）。
+
 ## 執筆スタイル
 
 - 簡潔・実用的に。手順は番号付きリスト、観点は箇条書きで示す。

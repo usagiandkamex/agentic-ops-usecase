@@ -12,6 +12,7 @@ applyTo: 'usecases/001-azure-resource-analysis/**'
   - 対象リソース: 「対象スコープの選定」の通り、分析範囲（単一 RG か全 RG か）と テナント/サブスク/RG を同意する。
   - 評価観点: 5観点（信頼性/セキュリティ/コスト最適化/オペレーショナルエクセレンス/パフォーマンス効率）のうち実施するものを同意する。
 - いずれかが未確定なら、候補を提示して確認し、**同意後にのみ**データ収集・分析を開始する。
+- 利用者への確認は **番号付きの選択肢** で提示し、選んで回答できる形式に統一する（自由記述前提の曖昧な質問にしない）。可能なら VS Code の質問 UI（クリックで選べる選択肢）を優先する。
 
 ## データ収集
 
@@ -65,13 +66,19 @@ applyTo: 'usecases/001-azure-resource-analysis/**'
 ## レポートの保存とレビュー
 
 - 分析完了後、結果を **HTML のフォルダ**（自己完結型・Azure Portal 風・インライン CSS）として
-  `usecases/001-azure-resource-analysis/reports/azure-resource-analysis_<YYYYMMDD-HHmmss>/` に保存する。
+  `usecases/001-azure-resource-analysis/reports/<YYYYMMDD-HHmmss>/` に保存する。
 - フォルダ内は `index.html`（ダッシュボード）＋ 各ピラー `reliability/security/cost/opex/performance.html`（実施観点のみ）＋ `architecture.html`（インライン SVG 構成図）。
-- テンプレート `report-template/index.html`・`report-template/pillar.html`・`report-template/architecture.html` を土台にする。
+- テンプレート `report-template/index.html`・`report-template/pillar.html`・`report-template/architecture.html` を
+  **必ず `read_file` で読み込み、`{{TOKEN}}` と `BEGIN/END` 区域を実データで置換した完成 HTML を `create_file` で書き出す**。
+  **`Copy-Item` 等のシェルコピーで作らない**（トークンが未置換のまま残る）。HTML/CSS を自作しない（Python 等の生成スクリプトも作らない）。`<style>`・クラス名は保持。
+  `architecture.html` はサンプル図をそのまま使わず、実リソース・トポロジで SVG を描き直し、矢印は根拠に基づいてのみ引く。
 - index.html には **主な改善点（課題点）の優先度順リスト** を載せ、各ピラーページは **WAF チェックリスト評価（✓/✗/–）** を中心に構成する。
 - **1回のエージェント実行 = 1フォルダ**（扱った観点をまとめる。同日複数回でも既存フォルダを上書きしない）。
-- **保存前にレビュー**を行う: ① `<...>` プレースホルダが残っていない（実値に置換済み）か、
-  ② 各指摘に根拠（WAF/MS Learn）リンクがあるか、③ サマリとテーブルが整合し各ピラーに強み・トレードオフがあるか、
-  ④ 機微情報（シークレット等）を含めていないか、⑤ 両 HTML が自己完結で表示・相互リンクできるか。
+- **保存前にレビュー**を行う: ① `<...>` プレースホルダや `{{TOKEN}}`・`BEGIN/END` マーカーが
+  残っていない（実値・実データに置換済み）か、② 各リンクの**テキストと遷移先の内容が一致**するか
+  （特に WAF チェックリスト表の各項目が **同じチェック ID の項目ガイド**を指しているか。`.../<pillar>/checklist` で ID・項目名を突き合わせる）、
+  ③ 出力がテンプレートの複製（`<style>`・主要クラス名保持）かつファイル名が規定通りか、
+  ④ サマリとテーブルが整合し各ピラーに強み・トレードオフがあるか、
+  ⑤ 機微情報（シークレット等）を含めていないか、⑥ 各 HTML が自己完結で表示・相互リンクできるか。
   問題があれば修正してから確定する。
 - `reports/` 配下は `.gitignore` 済み。実環境データを含むためコミットしない。

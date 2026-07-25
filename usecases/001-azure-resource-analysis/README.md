@@ -79,7 +79,7 @@ HTML レポートは **Azure Portal 風デザイン** で、次のテンプレ�
 | 低 | Managed Disk | 未使用ディスク | 削除またはスナップショット化 | 復旧元データを失う可能性 | [WAF: コスト最適化](https://learn.microsoft.com/azure/well-architected/cost-optimization/) |
 ```
 
-> 生成されたレポートは `reports/azure-resource-analysis_<YYYYMMDD-HHmmss>/`（フォルダ）に保存されます（`index.html`（ダッシュボード）＋ 各ピラー `reliability/security/cost/opex/performance.html`＋ `architecture.html`。同日複数回でも上書きされません）。このフォルダは `.gitignore` 済み（ローカル限定）のため、レポート内ではプレースホルダではなく **実際の ID・リソース名** を記載します（上記のサンプルは公開用のため一般化）。シークレット等の機微情報はローカルでも記載しません。
+> 生成されたレポートは `reports/<YYYYMMDD-HHmmss>/`（フォルダ）に保存されます（`index.html`（ダッシュボード）＋ 各ピラー `reliability/security/cost/opex/performance.html`＋ `architecture.html`。同日複数回でも上書きされません）。このフォルダは `.gitignore` 済み（ローカル限定）のため、レポート内ではプレースホルダではなく **実際の ID・リソース名** を記載します（上記のサンプルは公開用のため一般化）。シークレット等の機微情報はローカルでも記載しません。
 
 ## 注意事項
 

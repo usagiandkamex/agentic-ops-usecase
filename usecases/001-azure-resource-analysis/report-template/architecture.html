@@ -2,9 +2,24 @@
 <!--
   システム構成図ページ（テンプレート） / Architecture diagram page (template)
   - index.html と対になるページ。reports/<分析名>/architecture.html として出力される。
+  - このテンプレートを **そのまま複製し**、BEGIN/END ARCHITECTURE_RG 区域を実トポロジで置換する（HTML/CSS は自作しない）。
   - 構成図は「インライン SVG」で自己完結（外部依存なし）。
   - サブスクリプション配下の全 RG を分析する場合は、RG ごとに <details class="rg"> を複製して図を分ける。
-  - このテンプレートは公開ファイルのため、リソース名はサンプル。生成時は実値に置換する。
+  - このテンプレートは公開ファイルのため、リソース名はサンプル。内部の SVG は作図規約の手本として使う。
+
+  ==== 色定義（カテゴリ→色）: 本リポジトリの規約。再現性のため固定する ====
+  - ネットワーク (Network)      : 青    var(--net)     #0078D4  例: VNet, App Gateway, Load Balancer, Public IP
+  - コンピューティング (Compute) : ティール var(--compute) #0b8a8f 例: VM, VMSS, App Service, AKS, Functions
+  - データ (Data)               : 紫    var(--data)    #8661c5  例: SQL, Storage, Cosmos DB, Key Vault
+  - セキュリティ (Security)      : 赤    var(--sec)     #D13438  例: Azure Firewall, NSG, WAF, DDoS Protection
+  - 監視 (Monitoring)           : 緑    var(--mon)     #107C10  例: Log Analytics, App Insights, Alerts
+  - 外部 (External)             : 灰    #605e5c                 例: Internet, オンプレミス
+
+  ==== 作図規約（グリッド） ====
+  - ノード 150x60。列 X: C1=40, C2=270, C3=510, C4=750。行 Y: R1=100, R2=270, R3=390。
+  - VNet はゾーン枠（.zone）、Subnet は内側の破線枠（.subnet）。VNet 内に Subnet、Subnet 内にノードを配置する。
+  - 矢印は送信元/送信先ノードの辺の中心を直交（水平/垂直）で結ぶ。座標はノード座標から算出し辺に接続する。
+  - 生成後にレビューし、矢印のずれ・浮き・重なり・崩れがないか確認して修正する。
 -->
 <html lang="ja">
 <head>
@@ -81,6 +96,8 @@
   .node text.sub { fill: #eef; font-size: 10px; font-weight: 400; }
   .zone { fill: none; stroke: #c8c6c4; stroke-dasharray: 6 4; rx: 10; ry: 10; }
   .zone-label { fill: var(--az-text-sub); font-size: 12px; font-weight: 600; }
+  .subnet { fill: rgba(0,120,212,.03); stroke: #c8c6c4; stroke-dasharray: 4 3; rx: 8; ry: 8; }
+  .subnet-label { fill: var(--az-text-sub); font-size: 11px; }
   .edge { stroke: #8a8886; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
 </style>
 </head>
@@ -107,91 +124,110 @@
   </div>
 
   <!-- ===== RG ごとに <details class="rg"> を複製 ===== -->
+  <!-- BEGIN ARCHITECTURE_RG : RG ごとに下記 <details class="rg"> を雛形に複製。rg 名・要約・SVG を実トポロジに置換（グリッド/色規約を守る） -->
   <details class="rg" open>
     <summary><span class="rg-name">リソースグループ</span> <code>rg-sample-prod</code> <span style="margin-left:auto;color:var(--az-text-sub);font-weight:400">ハブ&amp;スポーク型 Web アプリ（サンプル）</span></summary>
     <div class="rg-body">
       <div class="diagram">
-        <svg viewBox="0 0 900 470" role="img" aria-label="rg-sample-prod のシステム構成図">
+        <svg viewBox="0 0 940 490" role="img" aria-label="rg-sample-prod のシステム構成図">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="#8a8886"/>
             </marker>
           </defs>
 
-          <!-- Zones -->
-          <rect class="zone" x="250" y="20" width="360" height="150"/>
-          <text class="zone-label" x="262" y="40">Hub VNet (vnet-hub-prod)</text>
-          <rect class="zone" x="250" y="200" width="620" height="240"/>
-          <text class="zone-label" x="262" y="220">Spoke VNet (vnet-spoke-prod)</text>
+          <!-- VNet (zone) + Subnet (subnet) -->
+          <!-- Hub VNet -->
+          <rect class="zone" x="255" y="48" width="426" height="140"/>
+          <text class="zone-label" x="263" y="64">Hub VNet (vnet-hub-prod · 10.0.0.0/16)</text>
+          <rect class="subnet" x="262" y="76" width="166" height="100"/>
+          <text class="subnet-label" x="268" y="90">GatewaySubnet (10.0.0.0/27)</text>
+          <rect class="subnet" x="502" y="76" width="166" height="100"/>
+          <text class="subnet-label" x="508" y="90">AzureFirewallSubnet (10.0.0.64/26)</text>
+          <!-- Spoke VNet -->
+          <rect class="zone" x="255" y="212" width="426" height="258"/>
+          <text class="zone-label" x="263" y="228">Spoke VNet (vnet-spoke-prod · 10.1.0.0/16)</text>
+          <rect class="subnet" x="262" y="240" width="166" height="218"/>
+          <text class="subnet-label" x="268" y="254">snet-app (10.1.1.0/24)</text>
+          <rect class="subnet" x="502" y="240" width="166" height="218"/>
+          <text class="subnet-label" x="508" y="254">snet-data (10.1.2.0/24)</text>
 
-          <!-- Internet -->
+          <!-- C1,R1 Internet (External) -->
           <g class="node">
-            <rect x="40" y="70" width="140" height="52" fill="#605e5c"/>
-            <text x="110" y="92" text-anchor="middle">Internet</text>
-            <text class="sub" x="110" y="108" text-anchor="middle">users</text>
+            <rect x="40" y="100" width="150" height="60" fill="#605e5c"/>
+            <text x="115" y="126" text-anchor="middle">Internet</text>
+            <text class="sub" x="115" y="142" text-anchor="middle">users</text>
+          </g>
+          <!-- C2,R1 Application Gateway (Network) in GatewaySubnet -->
+          <g class="node">
+            <rect x="270" y="100" width="150" height="60" fill="var(--net)"/>
+            <text x="345" y="126" text-anchor="middle">Application Gateway</text>
+            <text class="sub" x="345" y="142" text-anchor="middle">agw-prod · WAF</text>
+          </g>
+          <!-- C3,R1 Azure Firewall (Security) in AzureFirewallSubnet -->
+          <g class="node">
+            <rect x="510" y="100" width="150" height="60" fill="var(--sec)"/>
+            <text x="585" y="126" text-anchor="middle">Azure Firewall</text>
+            <text class="sub" x="585" y="142" text-anchor="middle">afw-prod</text>
+          </g>
+          <!-- C4,R1 Storage / Key Vault (Data, PaaS) -->
+          <g class="node">
+            <rect x="750" y="100" width="150" height="60" fill="var(--data)"/>
+            <text x="825" y="126" text-anchor="middle">Storage / Key Vault</text>
+            <text class="sub" x="825" y="142" text-anchor="middle">stprod · kv-prod</text>
           </g>
 
-          <!-- App Gateway (WAF) -->
+          <!-- C2,R2 VMSS Frontend (Compute) in snet-app -->
           <g class="node">
-            <rect x="270" y="66" width="150" height="60" fill="var(--net)"/>
-            <text x="345" y="90" text-anchor="middle">App Gateway</text>
-            <text class="sub" x="345" y="106" text-anchor="middle">agw-prod · WAF</text>
+            <rect x="270" y="270" width="150" height="60" fill="var(--compute)"/>
+            <text x="345" y="296" text-anchor="middle">VMSS Frontend</text>
+            <text class="sub" x="345" y="312" text-anchor="middle">vmss-frontend-prod</text>
+          </g>
+          <!-- C3,R2 DB VM Primary (Data) in snet-data -->
+          <g class="node">
+            <rect x="510" y="270" width="150" height="60" fill="var(--data)"/>
+            <text x="585" y="296" text-anchor="middle">DB VM Primary</text>
+            <text class="sub" x="585" y="312" text-anchor="middle">vm-db-primary-prod</text>
+          </g>
+          <!-- C4,R2 Log Analytics (Monitoring, PaaS) -->
+          <g class="node">
+            <rect x="750" y="270" width="150" height="60" fill="var(--mon)"/>
+            <text x="825" y="296" text-anchor="middle">Log Analytics</text>
+            <text class="sub" x="825" y="312" text-anchor="middle">law-prod</text>
           </g>
 
-          <!-- Azure Firewall -->
+          <!-- C2,R3 VMSS Backend (Compute) in snet-app -->
           <g class="node">
-            <rect x="450" y="66" width="140" height="60" fill="var(--sec)"/>
-            <text x="520" y="90" text-anchor="middle">Azure Firewall</text>
-            <text class="sub" x="520" y="106" text-anchor="middle">afw-prod</text>
+            <rect x="270" y="390" width="150" height="60" fill="var(--compute)"/>
+            <text x="345" y="416" text-anchor="middle">VMSS Backend</text>
+            <text class="sub" x="345" y="432" text-anchor="middle">vmss-backend-prod</text>
+          </g>
+          <!-- C3,R3 DB VM Replica (Data) in snet-data -->
+          <g class="node">
+            <rect x="510" y="390" width="150" height="60" fill="var(--data)"/>
+            <text x="585" y="416" text-anchor="middle">DB VM Replica</text>
+            <text class="sub" x="585" y="432" text-anchor="middle">vm-db-replica-prod</text>
+          </g>
+          <!-- C4,R3 Alerts + Action Group (Monitoring, PaaS) -->
+          <g class="node">
+            <rect x="750" y="390" width="150" height="60" fill="var(--mon)"/>
+            <text x="825" y="416" text-anchor="middle">Alerts + Action Group</text>
+            <text class="sub" x="825" y="432" text-anchor="middle">ag-prod</text>
           </g>
 
-          <!-- App tier (VMSS) -->
-          <g class="node">
-            <rect x="270" y="250" width="150" height="60" fill="var(--compute)"/>
-            <text x="345" y="274" text-anchor="middle">VM Scale Set</text>
-            <text class="sub" x="345" y="290" text-anchor="middle">vmss-app-prod</text>
-          </g>
-
-          <!-- Data tier (SQL) -->
-          <g class="node">
-            <rect x="500" y="250" width="150" height="60" fill="var(--data)"/>
-            <text x="575" y="274" text-anchor="middle">Azure SQL</text>
-            <text class="sub" x="575" y="290" text-anchor="middle">sql-prod</text>
-          </g>
-
-          <!-- Key Vault -->
-          <g class="node">
-            <rect x="700" y="250" width="150" height="60" fill="var(--sec)"/>
-            <text x="775" y="274" text-anchor="middle">Key Vault</text>
-            <text class="sub" x="775" y="290" text-anchor="middle">kv-prod</text>
-          </g>
-
-          <!-- Storage -->
-          <g class="node">
-            <rect x="270" y="350" width="150" height="60" fill="var(--data)"/>
-            <text x="345" y="374" text-anchor="middle">Storage</text>
-            <text class="sub" x="345" y="390" text-anchor="middle">stprod</text>
-          </g>
-
-          <!-- Log Analytics / Monitor -->
-          <g class="node">
-            <rect x="500" y="350" width="350" height="60" fill="var(--mon)"/>
-            <text x="675" y="374" text-anchor="middle">Log Analytics / Azure Monitor</text>
-            <text class="sub" x="675" y="390" text-anchor="middle">law-prod · 診断設定 / アラート</text>
-          </g>
-
-          <!-- Edges -->
-          <path class="edge" d="M180,96 L268,96"/>
-          <path class="edge" d="M420,96 L448,96"/>
-          <path class="edge" d="M345,126 L345,248"/>
-          <path class="edge" d="M420,280 L498,280"/>
-          <path class="edge" d="M650,280 L698,280"/>
-          <path class="edge" d="M345,310 L345,348"/>
-          <path class="edge" d="M520,126 L520,205"/>
+          <!-- Edges: 根拠ベースの配線（直交・辺の中心同士）。推測配線は引かない -->
+          <path class="edge" d="M190,130 L268,130"/>   <!-- Internet → App Gateway (ingress) -->
+          <path class="edge" d="M420,130 L508,130"/>   <!-- App Gateway → Azure Firewall (egress inspection) -->
+          <path class="edge" d="M345,160 L345,268"/>   <!-- App Gateway → VMSS Frontend -->
+          <path class="edge" d="M345,330 L345,388"/>   <!-- VMSS Frontend → VMSS Backend -->
+          <path class="edge" d="M420,300 L508,300"/>   <!-- VMSS Frontend → DB VM Primary -->
+          <path class="edge" d="M585,330 L585,388"/>   <!-- DB VM Primary → DB VM Replica (replication) -->
+          <path class="edge" d="M825,330 L825,388"/>   <!-- Log Analytics → Alerts + Action Group -->
         </svg>
       </div>
     </div>
   </details>
+  <!-- END ARCHITECTURE_RG -->
 
   <!-- 全 RG 分析時: 追加 RG の <details class="rg"> をここに複製 -->
 

@@ -2,18 +2,29 @@
 <!--
   ピラー詳細ページ テンプレート / Per-pillar detail page template.
   - reports/<分析名>/ 配下に reliability.html / security.html / cost.html / opex.html / performance.html
-    として観点ごとに複製し、値を差し込む。
+    として観点ごとに そのまま複製し、下記トークンを実値に置換 する（HTML を自作しない）。
   - index.html（ダッシュボード）から各ピラーページへリンクする。
   - 評価は「達成度」ではなく「ベストプラクティス準拠率（カバレッジ%）」＋ラベル。
     🟢 良好 80–100% / 🟡 要改善 50–79% / 🔴 要対応 0–49%
   - 「できている点（強み）」と「改善点（トレードオフ列つき）」を必ず併記する。
-  - 自己完結型（外部依存なし・インライン CSS）。値は公開用のためサンプル。
+  - BEGIN X / END X の区域は、内部の行を雛形に実データで複製/置換する。
+  - スタイル定義・クラス名は変えない。自己完結型（外部依存なし・インライン CSS）。値はサンプル（信頼性）。
+
+  トークン一覧 (agent が実値に置換。二重波括弧で囲む):
+  - PILLAR_NAME=観点名例「信頼性 (Reliability)」 / PILLAR_NAME_SHORT=例「信頼性」
+  - PILLAR_PILL_CLASS=good|warn|bad / PILLAR_LABEL=良好|要改善|要対応
+  - COVERAGE=準拠率(0-100、本文の数値) / PASS=満たした項目数 / TOTAL=評価した項目数
+  - cov-fill と pie の style: width/背景色/--hi/--mid を準拠率・色・改善点割合に置換
+  - IMP_TOTAL/IMP_HIGH/IMP_MID/IMP_LOW=件数、IMP_HIGH_PCT/IMP_MID_PCT/IMP_LOW_PCT=割合
+  - CHECKLIST_URL=対象柱の checklist URL / PILLAR_TOP_URL=対象柱のトップ URL
+  - 区域 : CHECKLIST_ROWS=チェック行 / IMPROVEMENT_ROWS=改善点行 (内部の行形式を雛形に複製)
+  - 注: ID・項目名・リンク先は必ず対象柱の checklist ページの記載をそのまま採用（推測しない）。
 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>信頼性 — Azure リソース分析</title>
+<title>{{PILLAR_NAME}} — Azure リソース分析</title>
 <style>
   :root {
     --az-blue: #0078D4; --az-blue-dark: #243A5E;
@@ -87,7 +98,7 @@
 
 <header class="topbar">
   <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M13.6 3 6 20h4.6l1.2-3h5.1l-3.4-8.2L16 3zM7.9 21 3 21l4.2-9.4z"/></svg>
-  <h1>信頼性 (Reliability)</h1>
+  <h1>{{PILLAR_NAME}}</h1>
   <span class="crumb">Well-Architected Framework · 読み取り専用分析</span>
 </header>
 
@@ -99,20 +110,20 @@
   <!-- 準拠率 + ラベル -->
   <div class="card">
     <div class="pillar-head">
-      <h2>信頼性 (Reliability)</h2>
-      <span class="pill good">良好</span>
+      <h2>{{PILLAR_NAME}}</h2>
+      <span class="pill {{PILLAR_PILL_CLASS}}">{{PILLAR_LABEL}}</span>
     </div>
     <div class="cov-line">
-      <span class="cov-num">80% <span class="cov-label">準拠率（WAF チェック項目 12/15 を充足）</span></span>
+      <span class="cov-num">{{COVERAGE}}% <span class="cov-label">準拠率（WAF チェック項目 {{PASS}}/{{TOTAL}} を充足）</span></span>
       <div class="cov-track"><div class="cov-fill" style="width:80%;background:var(--good)"></div></div>
     </div>
     <div class="pie-wrap">
       <div class="pie" style="--hi:0%; --mid:33%;" role="img" aria-label="改善点の優先度比率"></div>
       <div class="pie-legend">
-        <div style="font-weight:600;color:var(--az-text);margin-bottom:4px">改善点の優先度比率（計 3 件）</div>
-        <div><span class="lg-high">高: 0 件 (0%)</span></div>
-        <div><span class="lg-mid">中: 1 件 (33%)</span></div>
-        <div><span class="lg-low">低: 2 件 (67%)</span></div>
+        <div style="font-weight:600;color:var(--az-text);margin-bottom:4px">改善点の優先度比率（計 {{IMP_TOTAL}} 件）</div>
+        <div><span class="lg-high">高: {{IMP_HIGH}} 件 ({{IMP_HIGH_PCT}})</span></div>
+        <div><span class="lg-mid">中: {{IMP_MID}} 件 ({{IMP_MID_PCT}})</span></div>
+        <div><span class="lg-low">低: {{IMP_LOW}} 件 ({{IMP_LOW_PCT}})</span></div>
       </div>
     </div>
   </div>
@@ -120,18 +131,20 @@
   <!-- WAF チェックリスト評価（✓=満たす / ✗=未達 / –=対象外） -->
   <div class="card">
     <h3 class="block">WAF チェックリスト評価</h3>
-    <p style="font-size:12px;color:var(--az-text-sub);margin:0 0 8px">Azure WAF の <a href="https://learn.microsoft.com/azure/well-architected/reliability/checklist">信頼性チェックリスト</a> に沿って評価。✓=満たす（強み） / ✗=未達（改善点） / –=対象外。</p>
+    <p style="font-size:12px;color:var(--az-text-sub);margin:0 0 8px">Azure WAF の <a href="{{CHECKLIST_URL}}">{{PILLAR_NAME_SHORT}}チェックリスト</a> に沿って評価。✓=満たす（強み） / ✗=未達（改善点） / –=対象外。</p>
     <table class="chk">
       <thead>
         <tr><th>チェック項目</th><th>状態</th><th>所見</th></tr>
       </thead>
       <tbody>
+        <!-- BEGIN CHECKLIST_ROWS : 対象柱の checklist 項目ごとに下記行形式を雛形に複製。ID/項目名/リンク先は checklist ページの記載を採用 -->
         <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/metrics">RE:04</a>信頼性目標 (SLO/SLA) の定義</td><td class="st st-ok">✓ 満たす</td><td>主要ワークロードに可用性目標を設定済み。</td></tr>
         <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/redundancy">RE:05</a>冗長性による回復性</td><td class="st st-ok">✓ 満たす</td><td>VMSS を可用性ゾーン冗長で構成、App Gateway を冗長化。</td></tr>
         <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/scaling">RE:06</a>スケーリング</td><td class="st st-ok">✓ 満たす</td><td>オートスケール設定あり。</td></tr>
         <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/disaster-recovery">RE:09</a>災害復旧 (BCDR)</td><td class="st st-ng">✗ 未達</td><td>Storage が LRS で地理冗長なし（下記 改善点参照）。</td></tr>
         <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/monitoring">RE:10</a>正常性の監視とアラート</td><td class="st st-ok">✓ 満たす</td><td>正常性プローブ・診断設定あり。</td></tr>
         <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/reliability-test">RE:08</a>信頼性テスト（障害注入）</td><td class="st st-na">– 対象外</td><td>本分析（読み取り専用）では確認不可。</td></tr>
+        <!-- END CHECKLIST_ROWS -->
       </tbody>
     </table>
   </div>
@@ -144,6 +157,7 @@
         <tr><th>優先度</th><th>対象</th><th>指摘内容</th><th>推奨アクション</th><th>トレードオフ</th><th>根拠 (参考)</th></tr>
       </thead>
       <tbody>
+        <!-- BEGIN IMPROVEMENT_ROWS : 未達項目ごとに下記行形式を雛形に複製。根拠は具体的なガイドにリンク -->
         <tr>
           <td class="prio mid">中</td>
           <td>Storage (stprod)</td>
@@ -168,6 +182,7 @@
           <td class="tradeoff">移行作業・軽微なコスト増</td>
           <td><a href="https://learn.microsoft.com/azure/well-architected/reliability/redundancy">WAF RE:05: 冗長性</a></td>
         </tr>
+        <!-- END IMPROVEMENT_ROWS -->
       </tbody>
     </table>
   </div>
@@ -175,8 +190,8 @@
   <div class="card refs">
     <h3 class="block">参考</h3>
     <ul>
-      <li><a href="https://learn.microsoft.com/azure/well-architected/reliability/">Azure Well-Architected Framework — 信頼性</a></li>
-      <li><a href="https://learn.microsoft.com/azure/well-architected/reliability/checklist">信頼性 デザインレビュー チェックリスト</a></li>
+      <li><a href="{{PILLAR_TOP_URL}}">Azure Well-Architected Framework — {{PILLAR_NAME_SHORT}}</a></li>
+      <li><a href="{{CHECKLIST_URL}}">{{PILLAR_NAME_SHORT}} デザインレビュー チェックリスト</a></li>
     </ul>
   </div>
 
