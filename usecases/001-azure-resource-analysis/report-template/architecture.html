@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<!--
+  システム構成図ページ（テンプレート） / Architecture diagram page (template)
+  - index.html と対になるページ。reports/<分析名>/architecture.html として出力される。
+  - 構成図は「インライン SVG」で自己完結（外部依存なし）。
+  - サブスクリプション配下の全 RG を分析する場合は、RG ごとに <details class="rg"> を複製して図を分ける。
+  - このテンプレートは公開ファイルのため、リソース名はサンプル。生成時は実値に置換する。
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Azure システム構成図</title>
+<style>
+  :root {
+    --az-blue: #0078D4; --az-blue-dark: #243A5E;
+    --az-bg: #faf9f8; --az-card: #ffffff; --az-border: #edebe9;
+    --az-text: #201f1e; --az-text-sub: #605e5c;
+    --net: #0078D4; --compute: #0b8a8f; --data: #8661c5; --sec: #D13438; --mon: #107C10;
+    --shadow: 0 1.6px 3.6px rgba(0,0,0,.08), 0 0.3px 0.9px rgba(0,0,0,.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
+    background: var(--az-bg); color: var(--az-text); font-size: 14px; line-height: 1.5;
+  }
+  header.topbar {
+    background: linear-gradient(90deg, var(--az-blue-dark), var(--az-blue));
+    color: #fff; padding: 14px 28px; display: flex; align-items: center; gap: 12px;
+  }
+  header.topbar .logo { width: 26px; height: 26px; flex: 0 0 auto; }
+  header.topbar h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  header.topbar .crumb { margin-left: auto; font-size: 12px; opacity: .9; }
+  main { max-width: 1120px; margin: 0 auto; padding: 24px 28px 48px; }
+
+  .nav { margin-bottom: 20px; }
+  .btn {
+    display: inline-block; background: var(--az-card); color: var(--az-blue);
+    border: 1px solid var(--az-border); padding: 8px 16px; border-radius: 4px;
+    text-decoration: none; font-size: 13px; font-weight: 600;
+  }
+  .btn:hover { background: #f3f2f1; }
+
+  .note { background: #fff4ce; border: 1px solid #f7e6a2; border-radius: 6px; padding: 10px 14px; font-size: 12px; color: #6b5300; margin-bottom: 20px; }
+
+  /* Legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 20px; font-size: 12px; color: var(--az-text-sub); }
+  .legend span::before {
+    content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .lg-net::before { background: var(--net); }
+  .lg-compute::before { background: var(--compute); }
+  .lg-data::before { background: var(--data); }
+  .lg-sec::before { background: var(--sec); }
+  .lg-mon::before { background: var(--mon); }
+
+  /* Collapsible RG section */
+  details.rg {
+    background: var(--az-card); border: 1px solid var(--az-border);
+    border-radius: 8px; box-shadow: var(--shadow); margin-bottom: 16px; overflow: hidden;
+  }
+  details.rg > summary {
+    list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px;
+    padding: 16px 24px; font-weight: 600; user-select: none;
+  }
+  details.rg > summary::-webkit-details-marker { display: none; }
+  details.rg > summary::before {
+    content: "\25B8"; color: var(--az-text-sub); transition: transform .15s ease;
+  }
+  details.rg[open] > summary::before { transform: rotate(90deg); }
+  details.rg > summary .rg-name { font-size: 16px; }
+  details.rg > summary code { background: #f3f2f1; padding: 1px 6px; border-radius: 4px; font-weight: 400; }
+  .rg-body { padding: 0 24px 20px; }
+  .diagram { width: 100%; overflow-x: auto; }
+  svg { max-width: 100%; height: auto; display: block; }
+
+  /* SVG helpers */
+  .node rect { rx: 6; ry: 6; }
+  .node text { font-family: "Segoe UI", system-ui, sans-serif; fill: #fff; font-size: 12px; font-weight: 600; }
+  .node text.sub { fill: #eef; font-size: 10px; font-weight: 400; }
+  .zone { fill: none; stroke: #c8c6c4; stroke-dasharray: 6 4; rx: 10; ry: 10; }
+  .zone-label { fill: var(--az-text-sub); font-size: 12px; font-weight: 600; }
+  .edge { stroke: #8a8886; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M13.6 3 6 20h4.6l1.2-3h5.1l-3.4-8.2L16 3zM7.9 21 3 21l4.2-9.4z"/></svg>
+  <h1>Azure システム構成図</h1>
+  <span class="crumb">分析対象のトポロジ（読み取り専用・推定）</span>
+</header>
+
+<main>
+
+  <div class="nav"><a class="btn" href="index.html">&#8592;&nbsp;分析レポートに戻る (index.html)</a></div>
+
+  <div class="note">本図はリソースの構成情報から推定した論理トポロジです。実際の通信経路や依存関係と異なる場合があります。リソース名は実値（ローカルレポート）に置換されます。</div>
+
+  <div class="legend">
+    <span class="lg-net">ネットワーク</span>
+    <span class="lg-compute">コンピューティング</span>
+    <span class="lg-data">データ</span>
+    <span class="lg-sec">セキュリティ</span>
+    <span class="lg-mon">監視</span>
+  </div>
+
+  <!-- ===== RG ごとに <details class="rg"> を複製 ===== -->
+  <details class="rg" open>
+    <summary><span class="rg-name">リソースグループ</span> <code>rg-sample-prod</code> <span style="margin-left:auto;color:var(--az-text-sub);font-weight:400">ハブ&amp;スポーク型 Web アプリ（サンプル）</span></summary>
+    <div class="rg-body">
+      <div class="diagram">
+        <svg viewBox="0 0 900 470" role="img" aria-label="rg-sample-prod のシステム構成図">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#8a8886"/>
+            </marker>
+          </defs>
+
+          <!-- Zones -->
+          <rect class="zone" x="250" y="20" width="360" height="150"/>
+          <text class="zone-label" x="262" y="40">Hub VNet (vnet-hub-prod)</text>
+          <rect class="zone" x="250" y="200" width="620" height="240"/>
+          <text class="zone-label" x="262" y="220">Spoke VNet (vnet-spoke-prod)</text>
+
+          <!-- Internet -->
+          <g class="node">
+            <rect x="40" y="70" width="140" height="52" fill="#605e5c"/>
+            <text x="110" y="92" text-anchor="middle">Internet</text>
+            <text class="sub" x="110" y="108" text-anchor="middle">users</text>
+          </g>
+
+          <!-- App Gateway (WAF) -->
+          <g class="node">
+            <rect x="270" y="66" width="150" height="60" fill="var(--net)"/>
+            <text x="345" y="90" text-anchor="middle">App Gateway</text>
+            <text class="sub" x="345" y="106" text-anchor="middle">agw-prod · WAF</text>
+          </g>
+
+          <!-- Azure Firewall -->
+          <g class="node">
+            <rect x="450" y="66" width="140" height="60" fill="var(--sec)"/>
+            <text x="520" y="90" text-anchor="middle">Azure Firewall</text>
+            <text class="sub" x="520" y="106" text-anchor="middle">afw-prod</text>
+          </g>
+
+          <!-- App tier (VMSS) -->
+          <g class="node">
+            <rect x="270" y="250" width="150" height="60" fill="var(--compute)"/>
+            <text x="345" y="274" text-anchor="middle">VM Scale Set</text>
+            <text class="sub" x="345" y="290" text-anchor="middle">vmss-app-prod</text>
+          </g>
+
+          <!-- Data tier (SQL) -->
+          <g class="node">
+            <rect x="500" y="250" width="150" height="60" fill="var(--data)"/>
+            <text x="575" y="274" text-anchor="middle">Azure SQL</text>
+            <text class="sub" x="575" y="290" text-anchor="middle">sql-prod</text>
+          </g>
+
+          <!-- Key Vault -->
+          <g class="node">
+            <rect x="700" y="250" width="150" height="60" fill="var(--sec)"/>
+            <text x="775" y="274" text-anchor="middle">Key Vault</text>
+            <text class="sub" x="775" y="290" text-anchor="middle">kv-prod</text>
+          </g>
+
+          <!-- Storage -->
+          <g class="node">
+            <rect x="270" y="350" width="150" height="60" fill="var(--data)"/>
+            <text x="345" y="374" text-anchor="middle">Storage</text>
+            <text class="sub" x="345" y="390" text-anchor="middle">stprod</text>
+          </g>
+
+          <!-- Log Analytics / Monitor -->
+          <g class="node">
+            <rect x="500" y="350" width="350" height="60" fill="var(--mon)"/>
+            <text x="675" y="374" text-anchor="middle">Log Analytics / Azure Monitor</text>
+            <text class="sub" x="675" y="390" text-anchor="middle">law-prod · 診断設定 / アラート</text>
+          </g>
+
+          <!-- Edges -->
+          <path class="edge" d="M180,96 L268,96"/>
+          <path class="edge" d="M420,96 L448,96"/>
+          <path class="edge" d="M345,126 L345,248"/>
+          <path class="edge" d="M420,280 L498,280"/>
+          <path class="edge" d="M650,280 L698,280"/>
+          <path class="edge" d="M345,310 L345,348"/>
+          <path class="edge" d="M520,126 L520,205"/>
+        </svg>
+      </div>
+    </div>
+  </details>
+
+  <!-- 全 RG 分析時: 追加 RG の <details class="rg"> をここに複製 -->
+
+</main>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<!--
+  ピラー詳細ページ テンプレート / Per-pillar detail page template.
+  - reports/<分析名>/ 配下に reliability.html / security.html / cost.html / opex.html / performance.html
+    として観点ごとに複製し、値を差し込む。
+  - index.html（ダッシュボード）から各ピラーページへリンクする。
+  - 評価は「達成度」ではなく「ベストプラクティス準拠率（カバレッジ%）」＋ラベル。
+    🟢 良好 80–100% / 🟡 要改善 50–79% / 🔴 要対応 0–49%
+  - 「できている点（強み）」と「改善点（トレードオフ列つき）」を必ず併記する。
+  - 自己完結型（外部依存なし・インライン CSS）。値は公開用のためサンプル。
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>信頼性 — Azure リソース分析</title>
+<style>
+  :root {
+    --az-blue: #0078D4; --az-blue-dark: #243A5E;
+    --az-bg: #faf9f8; --az-card: #ffffff; --az-border: #edebe9;
+    --az-text: #201f1e; --az-text-sub: #605e5c;
+    --good: #107C10; --warn: #F7A600; --bad: #D13438;
+    --shadow: 0 1.6px 3.6px rgba(0,0,0,.08), 0 0.3px 0.9px rgba(0,0,0,.06);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI","Yu Gothic UI",system-ui,sans-serif; background: var(--az-bg); color: var(--az-text); font-size: 14px; line-height: 1.5; }
+  header.topbar { background: linear-gradient(90deg,var(--az-blue-dark),var(--az-blue)); color:#fff; padding:14px 28px; display:flex; align-items:center; gap:12px; }
+  header.topbar .logo { width:26px; height:26px; }
+  header.topbar h1 { font-size:18px; font-weight:600; margin:0; }
+  header.topbar .crumb { margin-left:auto; font-size:12px; opacity:.9; }
+  main { max-width:1120px; margin:0 auto; padding:24px 28px 48px; }
+
+  .nav { margin-bottom:20px; }
+  .btn { display:inline-block; background:var(--az-card); color:var(--az-blue); border:1px solid var(--az-border); padding:8px 16px; border-radius:4px; text-decoration:none; font-size:13px; font-weight:600; }
+  .btn:hover { background:#f3f2f1; }
+
+  .pill { display:inline-block; font-size:12px; font-weight:600; padding:2px 10px; border-radius:999px; vertical-align:middle; }
+  .pill.good { background:#dff6dd; color:var(--good); }
+  .pill.warn { background:#fff4ce; color:#8a6100; }
+  .pill.bad  { background:#fde7e9; color:var(--bad); }
+
+  .card { background:var(--az-card); border:1px solid var(--az-border); border-radius:8px; box-shadow:var(--shadow); padding:20px 24px; margin-bottom:20px; }
+  .pillar-head { display:flex; align-items:center; gap:12px; }
+  .pillar-head h2 { font-size:20px; margin:0; }
+
+  /* Coverage bar */
+  .cov-line { display:flex; align-items:center; gap:12px; margin:14px 0 4px; }
+  .cov-num { font-size:22px; font-weight:700; }
+  .cov-track { flex:1; height:10px; background:var(--az-border); border-radius:999px; overflow:hidden; max-width:360px; }
+  .cov-fill { height:100%; border-radius:999px; }
+  .cov-label { color:var(--az-text-sub); font-size:12px; }
+
+  /* Priority ratio stacked bar */
+  .pie-wrap { display:flex; align-items:center; gap:18px; margin:14px 0 4px; flex-wrap:wrap; }
+  .pie { width:96px; height:96px; border-radius:50%; flex:0 0 auto; background: conic-gradient(var(--bad) 0 var(--hi), var(--warn) var(--hi) var(--mid), var(--good) var(--mid) 100%); }
+  .pie-legend { font-size:12px; color:var(--az-text-sub); }
+  .pie-legend div { margin:2px 0; }
+  .pie-legend span::before { content:""; display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:middle; }
+  .lg-high::before { background:var(--bad); } .lg-mid::before { background:var(--warn); } .lg-low::before { background:var(--good); }
+
+  h3.block { font-size:15px; margin:0 0 10px; padding-left:9px; border-left:4px solid var(--az-blue); }
+  h3.block.good { border-left-color:var(--good); }
+
+  /* Strengths list */
+  ul.strengths { list-style:none; padding:0; margin:0; }
+  ul.strengths li { padding:6px 0 6px 26px; position:relative; border-bottom:1px solid var(--az-border); }
+  ul.strengths li:last-child { border-bottom:none; }
+  ul.strengths li::before { content:"\2714"; color:var(--good); position:absolute; left:4px; font-weight:700; }
+
+  table { width:100%; border-collapse:collapse; margin-top:6px; font-size:13px; }
+  thead th { background:#f3f2f1; text-align:left; padding:8px 12px; font-weight:600; border-bottom:1px solid var(--az-border); }
+  tbody td { padding:8px 12px; border-bottom:1px solid var(--az-border); vertical-align:top; }
+  tbody tr:hover { background:#f9f8f7; }
+  .prio { font-weight:700; white-space:nowrap; }
+  .prio.high { color:var(--bad); } .prio.mid { color:#8a6100; } .prio.low { color:var(--good); }
+  .tradeoff { color:var(--az-text-sub); font-size:12px; }
+  a { color:var(--az-blue); }
+  .refs { font-size:13px; }
+  .note { background:#fff4ce; border:1px solid #f7e6a2; border-radius:6px; padding:10px 14px; font-size:12px; color:#6b5300; margin-bottom:20px; }
+  /* WAF checklist status */
+  .chk td.st { white-space:nowrap; font-weight:700; }
+  .st-ok { color:var(--good); } .st-ng { color:var(--bad); } .st-na { color:var(--az-text-sub); }
+  .chk-id { color:var(--az-text-sub); font-size:12px; margin-right:6px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M13.6 3 6 20h4.6l1.2-3h5.1l-3.4-8.2L16 3zM7.9 21 3 21l4.2-9.4z"/></svg>
+  <h1>信頼性 (Reliability)</h1>
+  <span class="crumb">Well-Architected Framework · 読み取り専用分析</span>
+</header>
+
+<main>
+  <div class="nav"><a class="btn" href="index.html">&#8592;&nbsp;ダッシュボードに戻る (index.html)</a></div>
+
+  <div class="note">評価は <strong>WAF チェックリスト</strong> に沿って各項目を確認し、<strong>準拠率＝満たした項目 / 評価した項目</strong> で示します（達成度=完璧ではありません）。WAF は柱間にトレードオフがあるため、改善は他の柱への影響とあわせて検討してください。</div>
+
+  <!-- 準拠率 + ラベル -->
+  <div class="card">
+    <div class="pillar-head">
+      <h2>信頼性 (Reliability)</h2>
+      <span class="pill good">良好</span>
+    </div>
+    <div class="cov-line">
+      <span class="cov-num">80% <span class="cov-label">準拠率（WAF チェック項目 12/15 を充足）</span></span>
+      <div class="cov-track"><div class="cov-fill" style="width:80%;background:var(--good)"></div></div>
+    </div>
+    <div class="pie-wrap">
+      <div class="pie" style="--hi:0%; --mid:33%;" role="img" aria-label="改善点の優先度比率"></div>
+      <div class="pie-legend">
+        <div style="font-weight:600;color:var(--az-text);margin-bottom:4px">改善点の優先度比率（計 3 件）</div>
+        <div><span class="lg-high">高: 0 件 (0%)</span></div>
+        <div><span class="lg-mid">中: 1 件 (33%)</span></div>
+        <div><span class="lg-low">低: 2 件 (67%)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WAF チェックリスト評価（✓=満たす / ✗=未達 / –=対象外） -->
+  <div class="card">
+    <h3 class="block">WAF チェックリスト評価</h3>
+    <p style="font-size:12px;color:var(--az-text-sub);margin:0 0 8px">Azure WAF の <a href="https://learn.microsoft.com/azure/well-architected/reliability/checklist">信頼性チェックリスト</a> に沿って評価。✓=満たす（強み） / ✗=未達（改善点） / –=対象外。</p>
+    <table class="chk">
+      <thead>
+        <tr><th>チェック項目</th><th>状態</th><th>所見</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/metrics">RE:04</a>信頼性目標 (SLO/SLA) の定義</td><td class="st st-ok">✓ 満たす</td><td>主要ワークロードに可用性目標を設定済み。</td></tr>
+        <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/redundancy">RE:05</a>冗長性による回復性</td><td class="st st-ok">✓ 満たす</td><td>VMSS を可用性ゾーン冗長で構成、App Gateway を冗長化。</td></tr>
+        <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/scaling">RE:06</a>スケーリング</td><td class="st st-ok">✓ 満たす</td><td>オートスケール設定あり。</td></tr>
+        <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/disaster-recovery">RE:09</a>災害復旧 (BCDR)</td><td class="st st-ng">✗ 未達</td><td>Storage が LRS で地理冗長なし（下記 改善点参照）。</td></tr>
+        <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/monitoring">RE:10</a>正常性の監視とアラート</td><td class="st st-ok">✓ 満たす</td><td>正常性プローブ・診断設定あり。</td></tr>
+        <tr><td><a class="chk-id" href="https://learn.microsoft.com/azure/well-architected/reliability/reliability-test">RE:08</a>信頼性テスト（障害注入）</td><td class="st st-na">– 対象外</td><td>本分析（読み取り専用）では確認不可。</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 改善点（トレードオフ列つき） -->
+  <div class="card">
+    <h3 class="block">改善点</h3>
+    <table>
+      <thead>
+        <tr><th>優先度</th><th>対象</th><th>指摘内容</th><th>推奨アクション</th><th>トレードオフ</th><th>根拠 (参考)</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="prio mid">中</td>
+          <td>Storage (stprod)</td>
+          <td>冗長性が LRS（単一データセンター）</td>
+          <td>要件に応じて ZRS/GRS へ変更</td>
+          <td class="tradeoff">コスト増（コスト最適化と相反）</td>
+          <td><a href="https://learn.microsoft.com/azure/well-architected/reliability/disaster-recovery">WAF RE:09: 災害復旧</a></td>
+        </tr>
+        <tr>
+          <td class="prio low">低</td>
+          <td>VM (vm-batch)</td>
+          <td>可用性ゾーン外に単一配置</td>
+          <td>ゾーン配置または可用性セットを検討</td>
+          <td class="tradeoff">再デプロイの運用コスト</td>
+          <td><a href="https://learn.microsoft.com/azure/well-architected/reliability/redundancy">WAF RE:05: 冗長性</a></td>
+        </tr>
+        <tr>
+          <td class="prio low">低</td>
+          <td>Public IP (pip-legacy)</td>
+          <td>Basic SKU でゾーン冗長に非対応</td>
+          <td>Standard SKU へ移行</td>
+          <td class="tradeoff">移行作業・軽微なコスト増</td>
+          <td><a href="https://learn.microsoft.com/azure/well-architected/reliability/redundancy">WAF RE:05: 冗長性</a></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card refs">
+    <h3 class="block">参考</h3>
+    <ul>
+      <li><a href="https://learn.microsoft.com/azure/well-architected/reliability/">Azure Well-Architected Framework — 信頼性</a></li>
+      <li><a href="https://learn.microsoft.com/azure/well-architected/reliability/checklist">信頼性 デザインレビュー チェックリスト</a></li>
+    </ul>
+  </div>
+
+</main>
+</body>
+</html>

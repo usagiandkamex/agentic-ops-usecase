@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<!--
+  Azure リソース分析レポート HTML テンプレート
+  Azure Resource Analysis Report — HTML template (Azure Portal-inspired).
+
+  使い方 / Usage:
+  - エージェント(azure-resource-analyst)がこの index.html テンプレートを土台にレポート本体を生成する。
+  - 出力は「フォルダ単位」: reports/azure-resource-analysis_<YYYYMMDD-HHmmss>/index.html + architecture.html。
+    (.gitignore 済み・ローカル限定。フォルダごと無視される)
+  - このテンプレート自体は公開ファイルのため、値はプレースホルダ/サンプル。
+    生成レポートでは <SUBSCRIPTION_ID> 等を実値に置換し、扱った観点分の <details class="pillar"> を複製する。
+  - 各観点は <details>/<summary> で折り畳み可能。システム構成図は architecture.html に分離。
+  - 自己完結型 (外部依存なし・インライン CSS)。ダブルクリックでブラウザ表示できる。
+
+  データ差し込みポイント (agent が置換):
+  - メタ情報 : 分析日時 / 分析範囲（単一 RG かサブスクリプション全体かを平易に） / テナント / サブスク / RG / 観点 / 収集手段
+  - Overview : 総合準拠率(ドーナツ) + 各ピラーカード（詳細ページへのリンク）
+  - 各観点 <details class="pillar"> : スコア・比率・件数・指摘テーブル
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Azure リソース分析レポート</title>
+<style>
+  :root {
+    /* Azure Portal-inspired palette */
+    --az-blue: #0078D4;
+    --az-blue-dark: #243A5E;
+    --az-bg: #faf9f8;
+    --az-card: #ffffff;
+    --az-border: #edebe9;
+    --az-text: #201f1e;
+    --az-text-sub: #605e5c;
+    --good: #107C10;
+    --warn: #F7A600;
+    --bad: #D13438;
+    --shadow: 0 1.6px 3.6px rgba(0,0,0,.08), 0 0.3px 0.9px rgba(0,0,0,.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Yu Gothic UI", system-ui, -apple-system, sans-serif;
+    background: var(--az-bg);
+    color: var(--az-text);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* ---- Top command bar (Azure Portal header) ---- */
+  header.topbar {
+    background: linear-gradient(90deg, var(--az-blue-dark), var(--az-blue));
+    color: #fff;
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header.topbar .logo {
+    width: 26px; height: 26px; flex: 0 0 auto;
+  }
+  header.topbar h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  header.topbar .crumb { margin-left: auto; font-size: 12px; opacity: .9; }
+
+  main { max-width: 1120px; margin: 0 auto; padding: 24px 28px 48px; }
+
+  /* ---- Meta panel ---- */
+  .meta {
+    background: var(--az-card);
+    border: 1px solid var(--az-border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 16px 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px 24px;
+    margin-bottom: 24px;
+  }
+  .meta div { font-size: 13px; }
+  .meta .k { color: var(--az-text-sub); margin-right: 6px; }
+  .meta code { background: #f3f2f1; padding: 1px 6px; border-radius: 4px; }
+
+  h2.section-title {
+    font-size: 16px; font-weight: 600; margin: 32px 0 12px;
+    padding-left: 10px; border-left: 4px solid var(--az-blue);
+  }
+
+  /* ---- Overview: total gauge + pillar cards ---- */
+  .overview { display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch; }
+  .total-card {
+    background: var(--az-card); border: 1px solid var(--az-border);
+    border-radius: 8px; box-shadow: var(--shadow);
+    padding: 20px 24px; display: flex; align-items: center; gap: 20px;
+    min-width: 260px;
+  }
+  /* Donut gauge via conic-gradient */
+  .gauge {
+    --val: 0; --col: var(--warn);
+    width: 104px; height: 104px; border-radius: 50%; flex: 0 0 auto;
+    background: conic-gradient(var(--col) calc(var(--val) * 1%), var(--az-border) 0);
+    display: grid; place-items: center;
+  }
+  .gauge::before {
+    content: ""; position: relative; width: 78px; height: 78px;
+    background: var(--az-card); border-radius: 50%; grid-area: 1/1;
+  }
+  .gauge .val {
+    grid-area: 1/1; z-index: 1; text-align: center;
+  }
+  .gauge .val b { font-size: 24px; font-weight: 700; display: block; line-height: 1; }
+  .gauge .val small { font-size: 11px; color: var(--az-text-sub); }
+  .total-meta h3 { margin: 0 0 4px; font-size: 14px; color: var(--az-text-sub); font-weight: 600; }
+
+  .pillar-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px; flex: 1 1 460px;
+  }
+  .pcard {
+    background: var(--az-card); border: 1px solid var(--az-border);
+    border-radius: 8px; box-shadow: var(--shadow); padding: 14px 16px;
+    border-top: 3px solid var(--az-blue);
+  }
+  .pcard .name { font-size: 13px; color: var(--az-text-sub); font-weight: 600; }
+  .pcard .score { font-size: 26px; font-weight: 700; margin: 2px 0 6px; }
+  .pcard .counts { font-size: 12px; color: var(--az-text-sub); }
+  a.pcard { text-decoration: none; color: inherit; display: block; transition: box-shadow .1s ease; }
+  a.pcard:hover { box-shadow: 0 3px 8px rgba(0,0,0,.12); }
+
+  /* ---- Status pill ---- */
+  .pill {
+    display: inline-block; font-size: 12px; font-weight: 600;
+    padding: 2px 10px; border-radius: 999px; vertical-align: middle;
+  }
+  .pill.good { background: #dff6dd; color: var(--good); }
+  .pill.warn { background: #fff4ce; color: #8a6100; }
+  .pill.bad  { background: #fde7e9; color: var(--bad); }
+
+  /* ---- Findings table (Azure Portal grid) ---- */
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  thead th {
+    background: #f3f2f1; color: var(--az-text); text-align: left;
+    padding: 8px 12px; font-weight: 600; border-bottom: 1px solid var(--az-border);
+    white-space: nowrap;
+  }
+  tbody td { padding: 8px 12px; border-bottom: 1px solid var(--az-border); vertical-align: top; }
+  tbody tr:hover { background: #f9f8f7; }
+  .prio { font-weight: 700; white-space: nowrap; }
+  .prio.high { color: var(--bad); }
+  .prio.mid  { color: #8a6100; }
+  .prio.low  { color: var(--good); }
+  a { color: var(--az-blue); }
+
+  footer { color: var(--az-text-sub); font-size: 12px; margin-top: 24px; }
+  .note { background: #fff4ce; border: 1px solid #f7e6a2; border-radius: 6px; padding: 10px 14px; font-size: 12px; color: #6b5300; margin-bottom: 20px; }
+
+  /* ---- Nav button to architecture page ---- */
+  .nav { margin: 8px 0 24px; }
+  .btn {
+    display: inline-block; background: var(--az-blue); color: #fff;
+    padding: 8px 16px; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: 600;
+  }
+  .btn:hover { background: #106ebe; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M13.6 3 6 20h4.6l1.2-3h5.1l-3.4-8.2L16 3zM7.9 21 3 21l4.2-9.4z"/></svg>
+  <h1>Azure リソース分析レポート</h1>
+  <span class="crumb">Well-Architected Framework · 読み取り専用分析</span>
+</header>
+
+<main>
+
+  <!-- ===== メタ情報 (agent が実値に置換) ===== -->
+  <section class="meta">
+    <div><span class="k">分析日時</span>{{META_DATETIME}}</div>
+    <div><span class="k">分析範囲</span>{{META_SCOPE}}</div>
+    <div><span class="k">テナント</span><code>&lt;TENANT_ID&gt;</code></div>
+    <div><span class="k">サブスクリプション</span><code>&lt;SUBSCRIPTION_ID&gt;</code></div>
+    <div><span class="k">リソースグループ</span><code>&lt;RESOURCE_GROUP&gt;</code></div>
+    <div><span class="k">扱った観点</span>信頼性 / セキュリティ / コスト最適化 / オペレーショナルエクセレンス / パフォーマンス効率</div>
+    <div><span class="k">収集手段</span>Azure MCP / Azure CLI (照会系のみ)</div>
+  </section>
+
+  <div class="note">評価は「達成度」ではなく <strong>ベストプラクティス準拠率（カバレッジ%）</strong> です（🟢良好80–100% / 🟡要改善50–79% / 🔴要対応0–49%）。WAF は柱間にトレードオフがあるため、改善は他の柱への影響とあわせて検討してください。コスト・メトリクスは概算です。</div>
+
+  <div class="nav"><a class="btn" href="architecture.html">&#128506;&nbsp;システム構成図を開く (architecture.html)</a></div>
+
+  <!-- ===== 総合サマリ (Overview) — 複数観点実行時 ===== -->
+  <h2 class="section-title">総合サマリ (Overview)</h2>
+  <div class="overview">
+    <div class="total-card">
+      <div class="gauge" style="--val:69; --col:var(--warn);">
+        <span class="val"><b>69</b><small>%</small></span>
+      </div>
+      <div class="total-meta">
+        <h3>総合準拠率（平均）</h3>
+        <span class="pill warn">要改善</span>
+      </div>
+    </div>
+    <div class="pillar-grid">
+      <!-- 観点カード: 各観点1枚 (WAF 正規順) -->
+      <a class="pcard" href="reliability.html" style="border-top-color:var(--good)">
+        <div class="name">信頼性</div>
+        <div class="score">80% <span class="pill good">良好</span></div>
+        <div class="counts">改善点 高 0 / 中 1 / 低 2</div>
+      </a>
+      <a class="pcard" href="security.html" style="border-top-color:var(--bad)">
+        <div class="name">セキュリティ</div>
+        <div class="score">55% <span class="pill warn">要改善</span></div>
+        <div class="counts">改善点 高 3 / 中 2 / 低 1</div>
+      </a>
+      <a class="pcard" href="cost.html" style="border-top-color:var(--warn)">
+        <div class="name">コスト最適化</div>
+        <div class="score">76% <span class="pill warn">要改善</span></div>
+        <div class="counts">改善点 高 0 / 中 1 / 低 3</div>
+      </a>
+      <a class="pcard" href="opex.html" style="border-top-color:var(--warn)">
+        <div class="name">オペレーショナルエクセレンス</div>
+        <div class="score">60% <span class="pill warn">要改善</span></div>
+        <div class="counts">改善点 高 1 / 中 3 / 低 0</div>
+      </a>
+      <a class="pcard" href="performance.html" style="border-top-color:var(--warn)">
+        <div class="name">パフォーマンス効率</div>
+        <div class="score">74% <span class="pill warn">要改善</span></div>
+        <div class="counts">改善点 高 1 / 中 2 / 低 2</div>
+      </a>
+    </div>
+  </div>
+
+  <!-- ===== 観点別詳細 — 観点ごとに <details class="pillar"> を複製 (WAF 正規順) ===== -->
+  <h2 class="section-title">主な改善点（優先度順）</h2>
+  <p style="font-size:13px;color:var(--az-text-sub)">全観点の課題点のうち優先度の高いものを抜粋。詳細は各ピラーページを参照してください。</p>
+  <table>
+    <thead>
+      <tr><th>優先度</th><th>観点</th><th>対象</th><th>指摘内容</th><th>詳細</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="prio high">高</td><td>セキュリティ</td><td>Storage (stprod)</td><td>パブリックアクセスが有効</td><td><a href="security.html">詳細を開く</a></td></tr>
+      <tr><td class="prio high">高</td><td>セキュリティ</td><td>NSG</td><td>SSH(22) がインターネットへ全開放</td><td><a href="security.html">詳細を開く</a></td></tr>
+      <tr><td class="prio mid">中</td><td>オペレーショナルエクセレンス</td><td>複数リソース</td><td>診断設定が未送信のリソースあり</td><td><a href="opex.html">詳細を開く</a></td></tr>
+      <tr><td class="prio mid">中</td><td>コスト最適化</td><td>Log Analytics</td><td>日次取り込み上限 (Daily Cap) 未設定</td><td><a href="cost.html">詳細を開く</a></td></tr>
+      <tr><td class="prio mid">中</td><td>信頼性</td><td>Storage (stprod)</td><td>冗長性が LRS（地理冗長なし）</td><td><a href="reliability.html">詳細を開く</a></td></tr>
+    </tbody>
+  </table>
+
+  <!-- ===== 観点別の詳細ページ ===== -->
+  <h2 class="section-title">観点別の詳細</h2>
+  <p>各観点の詳細（<strong>できている点（強み）</strong>・改善点・トレードオフ）は、上のカードまたは下のリンクから個別ページを参照してください。</p>
+  <ul>
+    <li><a href="reliability.html">信頼性 (Reliability)</a></li>
+    <li><a href="security.html">セキュリティ (Security)</a></li>
+    <li><a href="cost.html">コスト最適化 (Cost Optimization)</a></li>
+    <li><a href="opex.html">オペレーショナルエクセレンス (Operational Excellence)</a></li>
+    <li><a href="performance.html">パフォーマンス効率 (Performance Efficiency)</a></li>
+  </ul>
+
+  <footer>
+    Generated by the <strong>azure-resource-analyst</strong> agent · 本レポートは実環境データを含むためローカル保存のみ (非コミット)。
+  </footer>
+
+</main>
+</body>
+</html>
