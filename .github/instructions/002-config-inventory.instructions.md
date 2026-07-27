@@ -40,7 +40,9 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
   **Resource Graph 単独結果で「0 件」と即断しない**。0 件時は `az account show`（接続スコープ）・`az group show`（RG 存在）・別経路の再列挙で裏取りしてから結論づける。
 - **並列化**: 詳細照会は並列でよい（すべて READ のため安全）。`ForEach-Object -Parallel` などコマンド内部のジョブで並列化（run_in_terminal を同時多重で呼ばない）。
 - **収集能力の判別とフォールバック**: Resource Graph / ARM（常時可）・Defender（`securityresources`）・Update Manager（`patchassessmentresources`）の可否を照会で判別。
-  未構成・参照不可なら **Resource Graph メタデータ＋EOL 照合**中心のフォールバックに切り替え、使える範囲でレポートする（無い結果を捏造しない）。  **Defender が「利用可」なら `microsoft.security/softwareinventories`（→`runtimeInventory[]`）と `microsoft.security/assessments`（→`securityRecommendations[]`）、**Update Manager が「利用可」なら `patchassessmentresources`（→`patchAssessment[]`）を必ず収集**する。空にするのは実際に該当が無い場合のみで、capabilityDetection と矛盾させない（利用可なのに空＋「未有効」表記をしない）。- **認証で止まらないライフハック**: 原則 `az login` を自分から実行せず `az account show` で認証済みか確認。止まる場合は先に `az config set core.login_experience_v2=off`
+  未構成・参照不可なら **Resource Graph メタデータ＋EOL 照合**中心のフォールバックに切り替え、使える範囲でレポートする（無い結果を捏造しない）。
+  **Defender が「利用可」なら** `microsoft.security/softwareinventories`（→`runtimeInventory[]`）と `microsoft.security/assessments`（→`securityRecommendations[]`）を必ず収集する。**Update Manager が「利用可」なら** `patchassessmentresources`（→`patchAssessment[]`）を必ず収集する。空にするのは実際に該当が無い場合のみで、capabilityDetection と矛盾させない（利用可なのに空＋「未有効」表記をしない）。
+- **認証で止まらないライフハック**: 原則 `az login` を自分から実行せず `az account show` で認証済みか確認。止まる場合は先に `az config set core.login_experience_v2=off`
   （ローカル CLI 設定のみ）で選択メニューを無効化し、`az account set --subscription <SUBSCRIPTION_ID>` で対象を固定。プロンプトで止まったら Enter（空入力）で先へ。
 
 ## 判定（脆弱性 / パッチ）
