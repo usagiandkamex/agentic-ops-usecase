@@ -12,7 +12,7 @@
   - スタイル定義・クラス名・HTML 構造は変えない。自己完結型 (外部依存なし・インライン CSS)。
 
   差し替え項目一覧 (agent が実値に置換。トークンは二重波括弧で囲む):
-  - メタ : META_DATETIME=分析日時 / META_SCOPE=分析範囲 / TENANT_ID / SUBSCRIPTION_NAME=サブスク名 /
+  - メタ : META_DATETIME=分析日時（**JST 明記**・例: 2026-07-27 14:30 JST） / META_SCOPE=分析範囲 / TENANT_ID / SUBSCRIPTION_NAME=サブスク名 /
            SUBSCRIPTION_ID / RESOURCE_GROUP / HANDLED_PILLARS=扱った観点 / COLLECTION_METHOD=収集手段
   - テナントは **ID のみ**（確実な名称が無ければ推定名を書かない）。サブスクは「名称 ID」形式。ID は code 要素で囲む。
   - 総合ゲージ: gauge の style="--val:.. --col:.." を総合準拠率と色(var(--good|warn|bad))に、TOTAL_VAL/TOTAL_PILL_CLASS/TOTAL_LABEL を置換
