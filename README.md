@@ -27,7 +27,8 @@ IT 運用（Ops）の実務課題を、GitHub Copilot を中心としたエー�
 ├── docs/
 │   └── usecase-template.md         ユースケースの雛形
 └── usecases/
-    └── 001-azure-resource-analysis/  ユースケースの説明・索引(README)
+    ├── 001-azure-resource-analysis/       ユースケースの説明・索引(README)
+    └── 002-config-inventory-vulnerability/ ユースケースの説明・索引(README)
 ```
 
 > エージェントの実体は VS Code の自動検出仕様に合わせ `.github/` 配下に置き、`<NNN>-` プレフィックスでユースケースを紐付けます。`usecases/<NNN>-<name>/README.md` は人が読むドキュメント（索引）です。
@@ -37,6 +38,7 @@ IT 運用（Ops）の実務課題を、GitHub Copilot を中心としたエー�
 | ユースケース | 概要 | リンク |
 | --- | --- | --- |
 | 001 Azure リソース分析 | Azure Well-Architected Framework の5本柱（信頼性・セキュリティ・コスト最適化・オペレーショナルエクセレンス・パフォーマンス効率）で Azure リソースを分析する | [usecases/001-azure-resource-analysis](usecases/001-azure-resource-analysis/README.md) |
+| 002 構成管理棚卸・脆弱性検知 | 利用者責任リソースの OS/ランタイム/エンジン版数を読み取り専用で棚卸し、公開脆弱性情報（Defender の CVE・EOL）と照合して是正要否・パッチ適用可否を判定する | [usecases/002-config-inventory-vulnerability](usecases/002-config-inventory-vulnerability/README.md) |
 
 > 新しいユースケースを追加したら、この表に1行追記してください。
 
