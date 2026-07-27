@@ -260,7 +260,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - **`vulnerabilities[]`**（findingType=`CVE` / `EOL` / `PatchMissing`）= CVE/脆弱性・OS のシステム更新（パッチ）。remediation ページに掲載。
 - **`securityRecommendations[]`** = 構成系の推奨（マネージド ID 未使用・診断ログ未設定・publicNetworkAccess・TLS 等）。security-recommendations ページに掲載。
 - **構成系の指摘を findingType=CVE と誤ラベルしない**（CVE は実際の既知脆弱性に限る）。`securityRecommendations` には resource/severity/category/title/recommendation/referenceUrl/assessmentId を含める。
-- ここの `category` は **Defender の推奨分類（セキュリティコントロールの群：Identity / Data / Network / Compute 等）**であり、**棚卸の 8 分類（参照 A）とは別物**（取得できなければ空欄可）。
+- ここの `category` は **Defender の推奨分類（セキュリティコントロールの群：Identity / Data / Network / Compute 等）**であり、**棚卸の 8 分類（参照 A）とは別物**（取得できなければ「取得不可（Reader の範囲外）」等で明示）。
 
 ### 参照 D. パッチ適用可否の判定
 
