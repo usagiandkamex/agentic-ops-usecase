@@ -2,7 +2,9 @@
 <!--
   システム構成図ページ（テンプレート） / Architecture diagram page (template)
   - index.html と対になるページ。reports/<分析名>/architecture.html として出力される。
-  - このテンプレートを **そのまま複製し**、BEGIN/END ARCHITECTURE_RG 区域を実トポロジで置換する（HTML/CSS は自作しない）。
+  - このテンプレートを `read_file` で読み込み、BEGIN/END ARCHITECTURE_RG 区域を実トポロジで置換した完成 HTML を書き出す（HTML/CSS は自作しない・シェルコピーで作らない）。
+  - ヘッダーの {{META_DATETIME}}=分析日時（**JST 明記**・例: 2026-07-27 14:30 JST）を index.html と同じ値に置換する。
+    （このトークンが未置換ならレポートは無効。サンプル図の放置検知を兼ねる。）
   - 構成図は「インライン SVG」で自己完結（外部依存なし）。
   - サブスクリプション配下の全 RG を分析する場合は、RG ごとに <details class="rg"> を複製して図を分ける。
   - このテンプレートは公開ファイルのため、リソース名はサンプル。内部の SVG は作図規約の手本として使う。
@@ -106,7 +108,7 @@
 <header class="topbar">
   <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M13.6 3 6 20h4.6l1.2-3h5.1l-3.4-8.2L16 3zM7.9 21 3 21l4.2-9.4z"/></svg>
   <h1>Azure システム構成図</h1>
-  <span class="crumb">分析対象のトポロジ（読み取り専用・推定）</span>
+  <span class="crumb">分析対象のトポロジ（読み取り専用・推定）・{{META_DATETIME}}</span>
 </header>
 
 <main>

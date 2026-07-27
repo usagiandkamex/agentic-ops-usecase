@@ -20,6 +20,18 @@ applyTo: 'usecases/001-azure-resource-analysis/**'
 - Azure MCP が使えない場合は **Azure CLI (`az`)** の同等コマンドを代替として提示する。
 - 取得は照会系（list / show / query）に限定し、**書き込み・変更・削除は行わない**。
 
+## 成果物の作り方（生成スクリプトを作らない）
+
+- **`findings.json` / HTML は、内容をエージェント自身が組み立て、`create_file`（新規）と編集ツール
+  （`replace_string_in_file` 等・更新）で直接書き出す**。
+- **Python / PowerShell 等で「ファイルを生成・組み立てる補助スクリプト」を書いたり実行したりしない**
+  （`.py` / `.ps1` / `.sh` / `.bat` / `.cmd` / `.js` 等のスクリプトファイルを **リポジトリにも一時フォルダにも作らない**）。
+- **`Copy-Item` 等のシェルのファイルコピーでテンプレートを複写して出力を作らない**（トークンが未置換のまま残るため）。
+- **端末（`run_in_terminal`）は次の 3 用途にのみ使う**: ① Azure への **READ 照会**、
+  ② 保存フォルダ名の **JST 時刻取得**（`[DateTime]::UtcNow.AddHours(9).ToString('yyyyMMdd-HHmmss')`）、
+  ③ **認証・対象コンテキストの確認/設定**（`az account show` / `az login` / `az account set` / 対話回避の `az config set core.login_experience_v2=off` ― ローカル CLI 設定のみで Azure への書き込みではない）。
+- **大量データでも直接組み立てて書き出す**（「量が多いから」を理由にスクリプト生成へ切り替えない。分割が必要なら編集ツールで追記する）。
+
 ## 対象スコープの選定
 
 - 分析は **必ずリソースグループ（RG）単位** で行う。対象範囲は次のいずれか（「パターン A/B」等の独自ラベルは使わない）。
@@ -70,7 +82,7 @@ applyTo: 'usecases/001-azure-resource-analysis/**'
 - フォルダ内は `index.html`（ダッシュボード）＋ 各ピラー `reliability/security/cost/opex/performance.html`（実施観点のみ）＋ `architecture.html`（インライン SVG 構成図）。
 - テンプレート `report-template/index.html`・`report-template/pillar.html`・`report-template/architecture.html` を
   **必ず `read_file` で読み込み、`{{TOKEN}}` と `BEGIN/END` 区域を実データで置換した完成 HTML を `create_file` で書き出す**。
-  **`Copy-Item` 等のシェルコピーで作らない**（トークンが未置換のまま残る）。HTML/CSS を自作しない（Python 等の生成スクリプトも作らない）。`<style>`・クラス名は保持。
+  **`Copy-Item` 等のシェルコピーで作らない**（トークンが未置換のまま残る）。**HTML/CSS を自作せず、Python / PowerShell 等の生成スクリプト（`.py` / `.ps1` 等）も書かない・実行しない**（「成果物の作り方」参照）。`<style>`・クラス名は保持。
   `architecture.html` はサンプル図をそのまま使わず、実リソース・トポロジで SVG を描き直し、矢印は根拠に基づいてのみ引く。
 - index.html には **主な改善点（課題点）の優先度順リスト** を載せ、各ピラーページは **WAF チェックリスト評価（✓/✗/–）** を中心に構成する。
 - **1回のエージェント実行 = 1フォルダ**（扱った観点をまとめる。同日複数回でも既存フォルダを上書きしない）。
