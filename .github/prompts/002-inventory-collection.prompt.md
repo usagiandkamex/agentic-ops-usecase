@@ -19,23 +19,27 @@ agent: 'azure-config-inventory-analyst'
 
 ## やること
 
-### 手順 2. 収集能力の判別
+### 手順 2. 収集能力の判別（サブ能力単位）
 
-- (a) Resource Graph / ARM（常時可）、(b) Defender（`securityresources` に所見があるか）、(c) Update Manager（`patchassessmentresources` に評価結果があるか）を **照会で判別**する。
-- (b)(c) が未構成・参照不可なら Resource Graph メタデータ＋EOL 照合中心のフォールバックに切り替える。
-- 🔍 レビュー 2: 3 経路の可否を記録し限界を明示したか。判別がすべて READ か。
+- (a) Resource Graph / ARM（常時可）、(b) Defender 推奨（`securityresources` の `assessments` に所見があるか）→`defenderForCloud`、(b2) Defender ソフトウェアインベントリ（`softwareinventories` に所見があるか・**MDVM は assessments と別能力**）→`defenderSoftwareInventory`、(c) Update Manager（`patchassessmentresources` に評価結果があるか）→`updateManager` を **照会で判別**する。
+- **RG スコープ 0 件でも即『未構成』としない**: サブスク全体で 1 件でもあれば `利用可`（RG 内 0 件は該当なし）、サブスク全体でも 0 件なら `未構成`（機能未有効）。権限不足で照会自体が失敗したら `参照不可`。未構成・参照不可なら Resource Graph メタデータ＋EOL 照合中心のフォールバックに切り替える。
+- 判別結果は手順 3 で作成する `findings.json` の `capabilityDetection`（`resourceGraph`/`defenderForCloud`/`defenderSoftwareInventory`/`updateManager`）に記録し、手順 3〜5 の実収集結果と照合する基準にする（整合性チェック・〈参照 I〉）。
+- **必須収集タスクの materialize（収集し損ね防止・〈参照 J〉）**: **サブ能力ごと**に、`利用可`→`status:pending`、`未構成/参照不可`→`status:downgraded`（確認不可）で `collectionPlan[]` に登録する（常に `Inventory:azResourceList`(dueStep3)、`defenderSoftwareInventory=利用可` → `Defender:softwareinventories`(dueStep3)、`defenderForCloud=利用可` → `Defender:assessments`(dueStep4)、`updateManager=利用可` → `UpdateManager:patchassessmentresources`(dueStep5)）。**Defender と Update Manager を同じ扱い**にする。以降、実行するたびに証跡付きで terminal 化し、切れ目ゲートで `pending` を 0 にしてから次へ進む。
+- 🔍 レビュー 2: 4 サブ能力の可否を実データ有無で記録し限界を明示したか（RG 0 件時は off か該当なしを切り分けたか）。**`利用可` を `pending`、`未構成/参照不可` を `downgraded` で `collectionPlan[]` に登録したか**。判別がすべて READ か。
 
 ### 手順 3. 棚卸収集（`findings.json` を作りながら）
 
 > 手順 3 冒頭で保存先 `reports/<YYYYMMDD-HHmmss>/` を決め、`report-template/findings.json` を複製した作業用 `findings.json` を **1 つだけ**作成し、収集の進行に合わせて逐次書き込む（別名 `findings-new.json` を作らない）。
 
-1. **3-1 全列挙（権威ソース起点）**: `az resource list --subscription <SUBSCRIPTION_ID> --resource-group <RESOURCE_GROUP> -o json` を**権威ある全列挙**とし、全リソースを取得する。
+1. **3-1 全列挙（`az resource list` を唯一の権威ソースに）**: `az resource list --subscription <SUBSCRIPTION_ID> --resource-group <RESOURCE_GROUP> -o json` を**唯一の権威ソース（single source of truth）**とし、その `id` 集合で棚卸対象を確定する。
+   **件数の固定（実行セッション間でブレさせない）**: `inventory[]` の件数・`summary.totalResources` はこの権威件数と**必ず一致**させる。Resource Graph / Azure MCP は**版数などの詳細補完と 0 件裏取り専用**で件数を増減させない（正典は常に `az resource list`）。
    **Resource Graph 単独結果で「0 件」と即断しない**。0 件時は ① `az account show`（接続スコープ）② `az group show -n <RESOURCE_GROUP>`（RG 存在）③ `az graph query` と Azure MCP の group resource list で再列挙、の 3 経路で裏取りしてから結論づける。
-2. **3-2 全リソースの登録と版数取得**: 全列挙を**すべて `inventory[]` に登録**する（`category` は機能別 8 分類。分類基準は〈参照 A〉）。
+2. **3-2 全リソースの登録と版数取得**: 権威リストを**すべて（漏れなく・重複なく）`inventory[]` に登録**する（`resourceId` で一意化。`category` は機能別 8 分類。分類基準は〈参照 A〉）。**登録直後に `inventory[]` の件数が `az resource list` の件数と一致することをその場で確認する**。
+   **行を増やさない（件数固定）**: 詳細照会で得た子/プロキシ（subnet・NSG ルール・`az resource list` に現れない内部コンポーネント）を `inventory[]` の新規行にしない。版数は親行のフィールドか `runtimeInventory[]` に退避する（〈参照 I〉）。
    版数・ランタイムの詳細は **★カテゴリ（Compute / AppRuntime / Container / Data）**を中心に、種別ごとの詳細照会（READ）で取得する（VM/VMSS のイメージ・osVersion・拡張機能、App Service の siteConfig、AKS の kubernetesVersion、マネージド DB の version 等。取得コマンドは〈参照 A〉）。
    **内部ランタイム・ソフトウェア**（対象は VM/VMSS と AKS/コンテナの内部のみ）は Defender ソフトウェアインベントリ
    `az graph query -q "securityresources | where type =~ 'microsoft.security/softwareinventories' | where id contains '<RESOURCE_GROUP>'"` で名称・版数・ベンダを抽出し `runtimeInventory[]` に格納する。
-   **手順 2 で Defender for Cloud が「利用可」ならこの照会を必ず実行**して埋める（省略しない）。空になるのは実際に該当ソフトが無い場合のみで、`capabilityDetection` と矛盾させない（Defender=利用可なのに「MDVM 未有効」と書かない）。取得不可は「取得不可（Reader / MDVM 未有効）」と明示。
+   **手順 2 で `defenderSoftwareInventory`（MDVM）が「利用可」ならこの照会を必ず実行**して埋める（省略しない）。空になるのは **`defenderSoftwareInventory=利用可` で実際に該当ソフトが無い場合のみ**（`empty-verified`）。**MDVM が `未構成/参照不可` なら「確認不可（MDVM 未有効）」（`downgraded`）**と明示し、`empty-verified`（該当なし）と混同しない。
 3. **3-3 並列化**: 対象が複数のときは詳細照会を並列に実行して短縮する（すべて READ のため安全。詳細は〈参照 E〉）。端末コマンドは 1 度に 1 本、並列化はコマンド内部のジョブで。
 
 ## 出力（`findings.json`）
@@ -49,6 +53,8 @@ agent: 'azure-config-inventory-analyst'
 
 ## レビュー 3（次工程前に必須）
 
-- 権威列挙（`az resource list`）を起点にし、0 件時は接続スコープ＋3 経路で裏取り・根拠明記したか。
+- `az resource list` を唯一の権威ソースにし、**`inventory[]` 件数が `az resource list` 件数（＝`summary.totalResources`）と一致**するか（実行セッション間でブレないか）。0 件時は接続スコープ＋3 経路で裏取り・根拠明記したか。
 - 対象 RG 内の全リソースを `inventory[]` に登録し、★カテゴリの版数を取得したか。取得不可を明示したか。
+- **整合性チェック**: 手順 2 の `capabilityDetection` と実収集結果が矛盾しないか（`defenderSoftwareInventory=利用可` なら `softwareinventories` を実収集、空なら再照会 → `empty-verified`（該当なし）or `downgraded`（確認不可）を確定）。MDVM 未有効を「該当なし」と混同していないか。食い違いを `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。
+- **切れ目ゲート G1（〈参照 J〉）**: `dueStep=3` のタスク（`Inventory:azResourceList`、`defenderSoftwareInventory=利用可` なら `Defender:softwareinventories`）が全て**証跡付きで terminal**（done/empty-verified/downgraded）か。`pending` が残っていれば手順 4 へ進まず、当該照会を実行する。`done` なのに `runtimeInventory[]` が空でないか。
 - 収集操作がすべて READ だったか（書き込み・評価トリガーなし）。
