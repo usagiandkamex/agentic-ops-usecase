@@ -20,7 +20,7 @@ agent: 'azure-config-inventory-analyst'
 
 ## やること
 
-1. **未適用パッチの把握**: 対象 VM の未適用パッチの有無・件数・分類（Critical / Security / その他）を、既存結果の READ で把握する。**手順 2 で Update Manager が「利用可」なら `patchassessmentresources` の照会を必ず実行**して `patchAssessment[]` を埋める（省略しない。空は対象 VM が無い場合のみで capabilityDetection と矛盾させない）。
+1. **未適用パッチの把握**: 対象 VM の未適用パッチの有無・件数・分類（Critical / Security / その他）を、既存結果の READ で把握する。**手順 2 で `updateManager` が「利用可」なら `patchassessmentresources` の照会を必ず実行**して `patchAssessment[]` を埋める（省略しない）。**Defender の MDVM と同じ扱い**で、空になるのは **`updateManager=利用可` で実際に対象 VM が無い場合のみ**（`empty-verified`＝該当なし）。**`updateManager=未構成/参照不可` なら「確認不可（Update Manager 未構成）」（`downgraded`）** と明示し、`empty-verified`（該当なし）と混同しない（capabilityDetection と矛盾させない）。
 2. **判定区分**:
    - `適用推奨`: 未適用の Critical / Security パッチあり。
    - `適用検討`: その他の更新あり。
@@ -37,5 +37,7 @@ agent: 'azure-config-inventory-analyst'
 ## レビュー 5（保存前に必須）
 
 - 各判定に根拠（未適用パッチ件数・分類、または情報なしの理由）を付けたか。
+- **整合性チェック**: 手順 2 の `capabilityDetection` と実収集結果が矛盾しないか（Update Manager=利用可なのに `patchAssessment[]` が空になっていないか）。食い違いは `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。
+- **切れ目ゲート G3（〈参照 J〉）**: `dueStep=5` のタスク（UpdateManager=利用可なら `UpdateManager:patchassessmentresources`）が全て**証跡付きで terminal** か。`pending` が残れば手順 6 へ進まず照会を実行する。証跡なしに `empty-verified` にしていないか。
 - 適用・評価トリガー等の書き込み操作を一切行っていないか（提示のみか）。
 - 未構成時に無い結果を捏造していないか。
