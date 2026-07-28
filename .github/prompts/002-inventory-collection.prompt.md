@@ -45,6 +45,7 @@ agent: 'azure-config-inventory-analyst'
 - `issue`（課題）は **手順 6 で確定**する（脆弱性照合・パッチ判定の結果を集約。基準は〈参照 B〉）。この段階では暫定でよい。
 - `collectionSource` の例: `ResourceGraph` / `az` / `Defender` / `UpdateManager`。取得できない項目は「取得不可（Reader の範囲外）」と記載。
 - 最終的に `inventory.csv` / `runtime-inventory.csv`（テンプレートをトークン置換して生成・UTF-8 BOM 付き）に反映される（生成は手順 6・出力仕様は〈参照 F〉）。
+- **セクション保持（Issue #4）**: `runtimeInventory[]` が 0 件でも `inventory.html` の「ランタイム / ソフトウェア明細」セクションは削除せず残し、テンプレのフォールバック行で「該当なし」を表示する。Defender ソフトウェアインベントリ等が未有効・参照不可で取得できない場合は「確認不可（Defender / Update Manager 未有効）」と明示する（`findings.json` の配列は空配列のまま）。
 
 ## レビュー 3（次工程前に必須）
 

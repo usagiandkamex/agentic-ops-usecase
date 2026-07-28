@@ -58,8 +58,9 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 - **対象は対象 RG 内の全リソース**（`inventory[]` に全列挙）。`category` は機能別 8 分類 `Compute`/`AppRuntime`/`Container`/`Data`/`Network`/`SecurityIdentity`/`Monitoring`/`Other`（★=版数/パッチ管理の主対象: Compute/AppRuntime/Container/Data）。
 - **ページの並び順**: 概要(index) → 棚卸インベントリ → 是正が必要な項目（重要度高・棚卸の直後）→ セキュリティ構成推奨。ランタイムは独立ページにせず棚卸インベントリに統合。
 - **全件掲載（省略禁止）・テンプレ改変禁止**: BEGIN/END 区域は対応配列の全要素を 1 行ずつ展開する（`inventory[]` が 57 件なら 57 行。「その他 N リソース」のような集約行を作らない）。テンプレートの見出し・列・構造を改変しない（独自 HTML を書き起こさない）。
+- **空セクションを消さない（Issue #4 対応・セクション保持）**: 区域が 0 件でも `<h2>`・テーブルを削除せず、`<tbody>` を空にしない。各テンプレ先頭コメントに記載のフォールバック行 `<tr><td colspan="<列数>" class="empty">該当なし</td></tr>` を **1 行だけ**出力してセクションを残す。**「該当なし」は収集実施の上で実際に 0 件のときのみ**。Defender / Update Manager が未構成・参照不可で収集・判定できない場合は「確認不可（<capability> 未有効）」と明示する（`capabilityDetection` と矛盾させない）。本ルールは **HTML 限定**で、CSV は 0 件ならヘッダ行のみ・`findings.json` の配列は空配列のまま（`該当なし` を合成レコード/要素にしない）。index のサマリ件数は 0 でも数値 `0` を表示する。
 - **文字コード（Windows 前提）**: CSV 4 種は **UTF-8 (BOM 付き)**（`create_file` 後に `Set-Content -Encoding utf8BOM` で再保存。先頭 3 バイト=239,187,191）。HTML / `findings.json` は BOM 不要。CSV はカンマ・改行・二重引用符を含む値を二重引用符で囲む（RFC 4180・列ズレ防止）。
-- **機械的検証ゲート（必須・全合格まで確定/提示しない）**: 保存後に、生成物全体で `{{...}}` / `<!-- BEGIN/END -->` / 先頭コメントが **0 件**、CSV 4 種が **BOM 付き**、`findings.json` が **有効な JSON**、**CSV 各行の列数がヘッダと一致**であることを端末の READ コマンドで確認する。不合格なら当該ファイルを再生成し再検証する。
+- **機械的検証ゲート（必須・全合格まで確定/提示しない）**: 保存後に、生成物全体で `{{...}}` / `<!-- BEGIN/END -->` / 先頭コメントが **0 件**、CSV 4 種が **BOM 付き**、`findings.json` が **有効な JSON**、**CSV 各行の列数がヘッダと一致**、**各ページのテーブル数がテンプレートどおり（index=2 / inventory=2 / remediation=3 / security-recommendations=1）で空の `<tbody></tbody>` が 0 件**（0 件の表は「該当なし / 確認不可」行が入る）であることを端末の READ コマンドで確認する。不合格なら当該ファイルを再生成し再検証する。
 
 ## 保存とレビュー
 
