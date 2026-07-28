@@ -209,8 +209,8 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   "inv csv=$((Import-Csv "$d/inventory.csv").Count) / findings inventory=$($j.inventory.Count) / totalResources=$($j.summary.totalResources)"  # 3 者一致が期待（権威件数・省略なし）
   (Get-ChildItem "$d/findings*.json").Count  # 期待 1（別名なし）
   ($j.collectionPlan | Where-Object { $_.status -eq 'pending' } | Measure-Object).Count  # 期待 0（収集ゲート G4・pending 残存なし）
-  # done ⟺ 対象配列が非空（相互チェック）。softwareinventories→runtimeInventory / assessments→securityRecommendations / patchassessmentresources→patchAssessment
-  $map=@{ 'Defender:softwareinventories'=$j.runtimeInventory.Count; 'Defender:assessments'=$j.securityRecommendations.Count; 'UpdateManager:patchassessmentresources'=$j.patchAssessment.Count }
+  # done ⟺ 対象配列が非空（相互チェック）。softwareinventories→runtimeInventory / assessments→(securityRecommendations+vulnerabilities) / patchassessmentresources→patchAssessment
+  $map=@{ 'Defender:softwareinventories'=$j.runtimeInventory.Count; 'Defender:assessments'=($j.securityRecommendations.Count + $j.vulnerabilities.Count); 'UpdateManager:patchassessmentresources'=$j.patchAssessment.Count }
   $j.collectionPlan | ForEach-Object { if($_.status -eq 'done' -and $map.ContainsKey($_.task) -and $map[$_.task] -eq 0){ "NG: $($_.task) は done だが対象配列が空" } }  # 出力なしが期待
   $j.collectionPlan | Select-Object task,status,evidence | Format-Table -Auto  # 全タスク terminal＋証跡付きを目視
   ```
