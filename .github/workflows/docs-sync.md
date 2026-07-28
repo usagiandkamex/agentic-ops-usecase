@@ -6,6 +6,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+checkout:
+  fetch-depth: 0  # full git history (matches GitHub's official gh-aw samples) so the agent can inspect recent commits
 safe-outputs:
   create-pull-request:
     title-prefix: "[docs-sync] "
@@ -31,7 +33,10 @@ stay consistent with the actual code, scripts, agents, prompts, and instructions
 
 1. Determine the review window. Inspect commits from roughly the **last 24 hours**
    (or since the previous scheduled run) using `git log`, e.g.
-   `git log --since="24 hours ago" --name-status`. If there are no relevant
+   `git log --since="24 hours ago" --name-status`. The repository is checked out
+   with full history (`fetch-depth: 0`), so this range is available; if the
+   command returns nothing, double-check with `git log -20 --name-status`
+   before concluding there are no changes. If there are genuinely no relevant
    code/config changes, stop and call `noop` with a short explanation.
 2. For each meaningful change (new/removed/renamed files, changed behavior,
    updated commands, altered structure, new agents/prompts/instructions),
