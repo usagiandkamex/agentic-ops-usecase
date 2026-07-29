@@ -35,6 +35,7 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 
 - **利用者への確認は原則として実行前に 1 回（実行前の最終確認）**。対象範囲と収集能力を示して承認を得る（スコープが未指定・曖昧なときは先にスコープを確定）。
   **承認後は、エラー・ブロッカー（権限不足・対象 0 件・取得不可の確定など）が無い限り途中で逐一確認せず最後まで自律的に進める**（収集能力が限定的でも既定でフォールバックして継続。例外的な続行確認は通常行わない）。**承認取得はワークフローの停止点ではない**——承認後は同一ターン内で直ちに③の収集を開始し、ターンを終了しない。
+- **スコープ解決は決定論で往復を減らす（エージェント定義〈参照 L〉）**: 対象の各入力トークンを **GUID 正規表現**（`^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$`）で判定し、**一致 → ID としてそのまま採用（環境で照合のみ）**、**一致しない（非空）→ 名前として環境（`az account list` 等）から解決**する（RG は常に名前）。**テナント/サブスク/RG が一意に解決できたら選択肢提示（スコープ選択）を省略し、確認は実行前の最終確認 1 回に集約**する。名前が複数一致 / 0 件など **曖昧なときだけ選択肢提示にフォールバック**する。**実 ID はハードコードせず、フォーマット（正規表現）だけを持ち実値は環境から解決**する（Public リポジトリ・READ 専用は不変）。
 - 確認を行う場面は **必ず選択肢形式**（VS Code の質問 UI・`vscode_askQuestions` を優先／使えなければ番号付き選択肢。既定値も示す）。
 
 ## データ収集
@@ -57,7 +58,7 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 
 ## 判定（脆弱性 / パッチ）
 
-- **脆弱性照合**: Defender（有効時）の相関 CVE、EOL は endoflife.date（主）/ Microsoft Lifecycle（補助）を Web の GET で参照。是正要否は `要` / `要確認` / `不要` で表し、各判定に**根拠**（CVE ID / EOL 日付 / 参照 URL / 情報源）を付ける（推測 URL は使わない）。決定論の判定基準はエージェント定義〈参照 B〉に従う。**加えて、`runtimeInventory[]` の全成分（製品×版数で重複排除）と現行 OS 版数を、公開 CVE ソース（NVD / ディストリ・ベンダのセキュリティトラッカー / MITRE / GHSA）で照合し Critical/High を `vulnerabilities[]`（CVE）に追加**する（`source` にソース名。該当版数が影響を受ける CVE のみ・推測 CVE を作らない）。**公開 CVE/EOL 照合は製品×版数で一意化してソース別並列予算（〈参照 M〉。NVD 無キー=4／APIキー有り=8–10、他ソースは各 6–8。実効 6–8 並列。429 を受けたソースは予算を一時半減）で fetch（または CVE ルックアップ・ワーカー `azure-cve-lookup-worker` を同予算で並列に）し、fetch 台帳で同一 製品×版数×URL の重複取得を禁止**、429/API 制限は指数バックオフ再試行、結果は親 Agent が `(resourceId, findingType, identifier)` キーで決定論マージする（〈参照 E〉/〈参照 L〉/〈参照 M〉）。
+- **脆弱性照合**: Defender（有効時）の相関 CVE、EOL は endoflife.date（主）/ Microsoft Lifecycle（補助）を Web の GET で参照。是正要否は `要` / `要確認` / `不要` で表し、各判定に**根拠**（CVE ID / EOL 日付 / 参照 URL / 情報源）を付ける（推測 URL は使わない）。決定論の判定基準はエージェント定義〈参照 B〉に従う。**加えて、`runtimeInventory[]` の全成分（製品×版数で重複排除）と現行 OS 版数を、公開 CVE ソース（NVD / ディストリ・ベンダのセキュリティトラッカー / MITRE / GHSA）で照合し Critical/High を `vulnerabilities[]`（CVE）に追加**する（`source` にソース名。該当版数が影響を受ける CVE のみ・推測 CVE を作らない）。**公開 CVE/EOL 照合は製品×版数で一意化してソース別並列予算（〈参照 M〉。NVD 無キー=4／APIキー有り=8–10、他ソースは各 6–8。実効 6–8 並列。429 を受けたソースは予算を一時半減）で fetch（または CVE ルックアップ・ワーカー `azure-cve-lookup-worker` を同予算で並列に）し、fetch 台帳で同一 製品×版数×URL の重複取得を禁止**、429/API 制限は指数バックオフ再試行、結果は親 Agent が `(resourceId, findingType, identifier)` キーで決定論マージする（〈参照 E〉/〈参照 N〉/〈参照 M〉）。
 - **脆弱性と構成推奨の分離**: `vulnerabilities`（findingType=CVE/EOL/PatchMissing）と `securityRecommendations`（Defender の構成系推奨：マネージド ID 未使用・診断ログ・publicNetworkAccess・TLS 等）を別ファイルに分ける。構成系を CVE と誤ラベルしない。
 - **パッチ適用可否**: Update Manager の既存結果を READ 参照し「適用推奨／適用検討／情報なし」を根拠件数とともに判定。適用は実行せず提示に留める。
 

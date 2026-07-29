@@ -99,7 +99,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 レポート生成（手順 6）と最終レビュー（手順 7）は**分離**する。**全手順を通じて READ 操作のみを用いる**。
 
 > **自律実行の原則（重要）**: 利用者への確認は **実行前に原則 1 回だけ**。**手順 2 まで済ませた後、手順 3 を始める前に「実行前の最終確認」（〈参照 G〉例1）を選択肢で提示**し、対象範囲と収集能力を示して承認を得る。
-> スコープが未指定・曖昧なときは先に「スコープの確認」（〈参照 G〉例2）で対象を確定してから最終確認する。
+> スコープは〈参照 L〉の決定論手順（GUID 判定 → ID 照合 / 名前解決）で解決し、**一意に解決できたら例2（スコープ選択）を省略して最終確認（例1）1 回に集約**する。一意に解決できないときだけ先に「スコープの確認」（〈参照 G〉例2）で対象を確定してから最終確認する。
 > **承認後は、エラーやブロッカー（権限不足・対象 0 件・取得不可の確定など）が無い限り、手順 3〜7 を停止して指示を仰がず最後まで自律的に進める**（途中経過の逐一確認はしない）。
 > **確認取得（承認）はワークフローの停止点ではない**——承認を得たら**同一ターン内で直ちに手順 3 の収集を開始し、ターンを終了しない**（「承認をもらったので一旦終了」をしない）。中断が避けられない場合も `progress.md` に現在地・次アクションを残す。
 > 収集能力が限定的でも既定でフォールバックして継続し、続行確認（例3）は例外用（通常は使わない）。READ 専用のため破壊的操作の確認は不要。
@@ -108,9 +108,10 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 
 - **（起動直後・スコープ確認より前）進捗トラッキングを開始する**: 保存先 `reports/<YYYYMMDD-HHmmss>/`（JST 秒精度・〈参照 F〉）を確定し、`report-template/progress.md` を `read_file` で読み `create_file` で作成する（対象 SUB/RG は未確定でよく、確定後に更新）。以降、各手順の切れ目で更新する（〈参照 K〉）。**これはスコープ質問でユーザー入力待ちになる前に行い、実行全体を最初から記録する**。
 - 対象の **テナント / サブスクリプション / RG** と範囲（**単一 RG** か **サブスク配下の全 RG** か）を確定する。
-- 明示がなければ、現在のコンテキスト（Azure MCP、または `az account show` / `az group list`）を **選択肢**（〈参照 G〉例2）で提示して確認する。**同意した対象のみ**を扱う。
+- **入力を決定論的に分類して解決する（〈参照 L〉）**: 各入力トークンを **GUID 正規表現**（`^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$`）で判定し、**一致 → ID としてそのまま採用（環境で照合のみ）**、**一致しない（非空）→ 名前として環境（Azure MCP、または `az account list` 等）から解決**する（**RG は GUID ではないため常に名前**）。**テナント/サブスク/RG が一意に解決できたら〈参照 G〉例2（スコープ選択）を省略**し、例1（実行前の最終確認）1 回に集約する。
+- **一意に解決できないときだけ**（名前が複数一致 / 0 件、または未指定で候補が複数）、現在のコンテキスト（Azure MCP、または `az account show` / `az account list` / `az group list`）を **選択肢**（〈参照 G〉例2）で提示して確認する。未指定でも現在の既定に一意に定まるなら例2 を省略して例1 へ進む。**同意した対象のみ**を扱う。
 - **Reader 権限で READ のみ行う**ことを明示する。
-- 🔍 **レビュー 1**: (a) 対象・範囲が確定したか。(b) READ 専用・Reader 前提を明示したか。(c) この時点まで書き込み操作をしていないか。(d) **起動直後に `progress.md` を作成し、対象を確定後に更新したか**（〈参照 K〉）。
+- 🔍 **レビュー 1**: (a) 対象・範囲が確定したか。(b) READ 専用・Reader 前提を明示したか。(c) この時点まで書き込み操作をしていないか。(d) **起動直後に `progress.md` を作成し、対象を確定後に更新したか**（〈参照 K〉）。(e) **入力を GUID 判定で ID / 名前に分類し、一意に解決できたら例2 を省略して確認を最終確認 1 回に集約したか**（曖昧時のみ例2 へフォールバック・〈参照 L〉）。
 
 ### 手順 2. 収集能力の自動判別
 
@@ -194,14 +195,14 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - Defender の **構成系推奨**（CVE/パッチでないもの）は `securityRecommendations[]` に別途格納する（〈参照 C〉。vulnerabilities に混ぜない）。
   **手順 2 で Defender for Cloud が「利用可」の場合は、`microsoft.security/assessments` の照会を必ず実行**して構成系推奨を `securityRecommendations[]` に格納する（省略しない）。空になるのは実際に該当所見が無い場合のみで、`capabilityDetection` と矛盾しないこと。
 - EOL 照合は endoflife.date（主）/ Microsoft Lifecycle（補助）を **Web の GET** で参照する。推測の URL は使わない。
-- **公開 CVE 横断照合（Defender に依存しない・重要）**: `runtimeInventory[]` の**全成分**を **製品×版数で重複排除**し、公開脆弱性ソースを **Web の GET** で照合して **Critical/High** の既知 CVE を `vulnerabilities[]`（findingType=CVE）に追加する（〈参照 E〉の重複排除・まとめ取得に従う）。**製品×版数で一意化した対象を〈参照 M〉のソース別並列予算（NVD 無キー=4／APIキー有り=8–10、他ソースは各 6–8。多様な componentType では実効 6–8 並列）で fetch（または〈参照 L〉の CVE ルックアップ・ワーカーを同予算で並列に）**し、**同一 製品×版数×URL の重複取得は fetch 台帳（fetchLedger・`pending`/`succeeded`/`failed`）で禁止**する（重複抑止は `succeeded` のみ・`failed` は指数バックオフで再試行、429 を受けたソースは予算を一時半減）。HTTP 429 / API 制限時は**指数バックオフ**で再試行 → 取得可能分のみ載せフォールバック理由を evidence に記録。結果は**親 Agent が `(resourceId, findingType, identifier)` キーで重複排除して安定順に決定論マージ**し（並列書き込み競合なし）、各バッチの `startedAt`/`endedAt`/`durationSec`/`resultCount`/`retryCount` を記録する。ソースは **NVD（`services.nvd.nist.gov` の CVE API・主）**、**ディストリ/ベンダのセキュリティトラッカー（Ubuntu Security Notices / Red Hat CVE DB / MSRC 等・OS パッケージ/OS 版数向け）**、**MITRE CVE（`cve.org`）**、**GHSA（GitHub Advisory・言語ライブラリ向け）** を用いる。深刻度は情報源の **CVSS（Critical/High）をそのまま**採用し、`source` は該当ソース（`NVD`/`MITRE`/`GHSA`/`DistroSecurityTracker`/`MSRC`）を記す。**該当版数が影響を受ける CVE のみ**を載せ、推測 URL・未確認 CVE を作らない（取得不可は「取得不可」と明示）。
+- **公開 CVE 横断照合（Defender に依存しない・重要）**: `runtimeInventory[]` の**全成分**を **製品×版数で重複排除**し、公開脆弱性ソースを **Web の GET** で照合して **Critical/High** の既知 CVE を `vulnerabilities[]`（findingType=CVE）に追加する（〈参照 E〉の重複排除・まとめ取得に従う）。**製品×版数で一意化した対象を〈参照 M〉のソース別並列予算（NVD 無キー=4／APIキー有り=8–10、他ソースは各 6–8。多様な componentType では実効 6–8 並列）で fetch（または〈参照 N〉の CVE ルックアップ・ワーカーを同予算で並列に）**し、**同一 製品×版数×URL の重複取得は fetch 台帳（fetchLedger・`pending`/`succeeded`/`failed`）で禁止**する（重複抑止は `succeeded` のみ・`failed` は指数バックオフで再試行、429 を受けたソースは予算を一時半減）。HTTP 429 / API 制限時は**指数バックオフ**で再試行 → 取得可能分のみ載せフォールバック理由を evidence に記録。結果は**親 Agent が `(resourceId, findingType, identifier)` キーで重複排除して安定順に決定論マージ**し（並列書き込み競合なし）、各バッチの `startedAt`/`endedAt`/`durationSec`/`resultCount`/`retryCount` を記録する。ソースは **NVD（`services.nvd.nist.gov` の CVE API・主）**、**ディストリ/ベンダのセキュリティトラッカー（Ubuntu Security Notices / Red Hat CVE DB / MSRC 等・OS パッケージ/OS 版数向け）**、**MITRE CVE（`cve.org`）**、**GHSA（GitHub Advisory・言語ライブラリ向け）** を用いる。深刻度は情報源の **CVSS（Critical/High）をそのまま**採用し、`source` は該当ソース（`NVD`/`MITRE`/`GHSA`/`DistroSecurityTracker`/`MSRC`）を記す。**該当版数が影響を受ける CVE のみ**を載せ、推測 URL・未確認 CVE を作らない（取得不可は「取得不可」と明示）。
 - 🔍 **レビュー 4**: (a) 各是正要否に根拠（CVE ID / EOL 日付 / 参照 URL / 情報源）を付けたか。(b) 版数不明・情報不足を「要確認」にしたか。(c) **整合性チェック**: Defender が「利用可」なら `assessments` を実際に照会し、`vulnerabilities[]`/`securityRecommendations[]` の収集結果が `capabilityDetection` と矛盾しないか（利用可なのに空＋「未有効」の矛盾を書かない）。矛盾は `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。(d) **切れ目ゲート G2（〈参照 J〉）**: `dueStep=4` の `collectionPlan[]` タスク（Defender=利用可なら `Defender:assessments`、常時 `CVE:runtimeLookup`）が**すべて証跡付きで terminal** か。`pending` が残れば手順 5 へ進まず実行する。**消化後に `progress.md` の手順 4・G2 を更新する。** (e) **公開 CVE 照合**: `runtimeInventory[]` の全成分（製品×版数で重複排除）を NVD/ディストリ・ベンダ/MITRE/GHSA で照合し、Critical/High を `vulnerabilities[]` に追加したか（`CVE:runtimeLookup` タスクを消化したか）。(f) 書き込み・スキャン起動をしていないか。
 
 ### 手順 5. パッチ適用可否判定
 
 - 〈参照 D〉に従い、Update Manager の **既存の評価結果を READ 参照**し（有効時）、対象 VM ごとに適用可否・優先度・推奨を判定して `patchAssessment[]` に格納する。
   **手順 2 で Update Manager が「利用可」なら、`patchassessmentresources`（必要に応じて `patchinstallationresults`）の照会を必ず実行**して対象 VM を `patchAssessment[]` に格納する（省略しない）。`patchAssessment[]` が空になるのは **未構成/参照不可、または対象 VM が無い場合のみ**で、`capabilityDetection` と矛盾させない（利用可なのに空にしない）。未構成時は「情報なし」とし EOL/版数ベースの推奨に留める。
-- **現行 OS 版数の公開 CVE 横断（Update Manager だけに頼らない・重要）**: 各 VM の**現行 OS 版数**（`inventory[]` の runtime / instanceView の osName+osVersion）について、Update Manager の未適用パッチに加え、**公開ソース（ディストリ/ベンダのセキュリティトラッカー主・NVD/MSRC 補助）で現行版数に該当する Critical/High の CVE を横断チェック**し `vulnerabilities[]`（findingType=CVE）に追加する（〈参照 E〉で重複排除・まとめ取得。`source` はソース名）。**OS 版数を製品×版数で一意化し、手順 4 と共通の fetch 台帳（fetchLedger・`pending`/`succeeded`/`failed`）で重複取得を避けつつ〈参照 M〉のソース別並列予算（OS/OSパッケージ主体のため主にディストリ/ベンダのトラッカー 6–8、NVD 補助は無キー=4／APIキー有り=8–10。実効 6–8 並列）で fetch（または〈参照 L〉の CVE ルックアップ・ワーカーを同予算で並列に）**、429/API 制限は指数バックオフ再試行（重複抑止は `succeeded` のみ・`failed` は再割当、429 を受けたソースは予算を一時半減）。結果は**親 Agent が `vulnerabilities[]` の安定キー `resourceId+findingType+identifier`（〈参照 B〉）で重複排除して安定順に決定論マージ**し、`durationSec`/`retryCount` 等を evidence に記録する。Update Manager が未構成でも本チェックは行い、該当版数が影響を受ける CVE のみを載せる（推測・未確認 CVE を作らない）。
+- **現行 OS 版数の公開 CVE 横断（Update Manager だけに頼らない・重要）**: 各 VM の**現行 OS 版数**（`inventory[]` の runtime / instanceView の osName+osVersion）について、Update Manager の未適用パッチに加え、**公開ソース（ディストリ/ベンダのセキュリティトラッカー主・NVD/MSRC 補助）で現行版数に該当する Critical/High の CVE を横断チェック**し `vulnerabilities[]`（findingType=CVE）に追加する（〈参照 E〉で重複排除・まとめ取得。`source` はソース名）。**OS 版数を製品×版数で一意化し、手順 4 と共通の fetch 台帳（fetchLedger・`pending`/`succeeded`/`failed`）で重複取得を避けつつ〈参照 M〉のソース別並列予算（OS/OSパッケージ主体のため主にディストリ/ベンダのトラッカー 6–8、NVD 補助は無キー=4／APIキー有り=8–10。実効 6–8 並列）で fetch（または〈参照 N〉の CVE ルックアップ・ワーカーを同予算で並列に）**、429/API 制限は指数バックオフ再試行（重複抑止は `succeeded` のみ・`failed` は再割当、429 を受けたソースは予算を一時半減）。結果は**親 Agent が `vulnerabilities[]` の安定キー `resourceId+findingType+identifier`（〈参照 B〉）で重複排除して安定順に決定論マージ**し、`durationSec`/`retryCount` 等を evidence に記録する。Update Manager が未構成でも本チェックは行い、該当版数が影響を受ける CVE のみを載せる（推測・未確認 CVE を作らない）。
 - 🔍 **レビュー 5**: (a) 各判定に根拠（未適用パッチ件数・分類、または情報なしの理由）を付けたか。(b) **整合性チェック**: Update Manager が「利用可」なら `patchassessmentresources` を実際に照会し、`patchAssessment[]` の収集結果が `capabilityDetection` と矛盾しないか（利用可なのに空にしない）。矛盾は `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。(c) **切れ目ゲート G3（〈参照 J〉）**: `dueStep=5` の `collectionPlan[]` タスク（UpdateManager=利用可なら `UpdateManager:patchassessmentresources`、常時 `CVE:osLookup`）が**すべて証跡付きで terminal** か。`pending` が残れば手順 6 へ進まず実行する。**消化後に `progress.md` の手順 5・G3 を更新する。** (d) **OS 版数の公開 CVE 横断**: 現行 OS 版数の Critical/High CVE をディストリ/ベンダ/NVD/MSRC で確認し `vulnerabilities[]` に追加したか（`CVE:osLookup` タスクを消化したか）。(e) 適用・評価トリガー等の書き込みをしていないか（提示のみか）。
 
 ### 手順 6. レポート生成・保存（読み込み → 置換 → 検証ゲート）
@@ -368,7 +369,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 4. **Defender assessments 等はサーバ側で条件フィルタ**（例: `where properties.status.code =~ 'Unhealthy'`、対象 RG・種別で絞る）。`--skip-token` の往復を最小化。
 5. **収集と生成を分離**。まず `findings.json` を完成 → その後 HTML/CSV を生成。CSV の BOM 変換は **全 CSV を 1 つのインラインコマンド（端末で 1 回）で一括処理**（スクリプトファイルは作らない）。
 6. **EOL の Web 取得は必要な URL を先に列挙して 1 回でまとめて**取得（同一 product を重複取得しない）。
-7. **公開 CVE の Web 取得も重複排除・まとめ取得（ソース別並列予算 /〈参照 M〉）**。`runtimeInventory[]` / OS 版数を **製品×版数で一意化**してから NVD/ディストリ・ベンダ/MITRE/GHSA に問い合わせ、**〈参照 M〉のソース別並列予算（NVD 無キー=4／APIキー有り=8–10、他ソースは各 6–8。多様な componentType では実効 6–8 並列。429 を受けたソースは予算を一時半減）**（または CVE ルックアップ・ワーカー〈参照 L〉）で fetch する。**fetch 台帳（fetchLedger）は親 Agent が保持**し、各 製品×版数×URL を `pending`/`succeeded`/`failed` で管理する。**重複取得の抑止は `succeeded` の項目にのみ適用**し、`failed`（429/タイムアウト/権限）は重複禁止にせず**指数バックオフで再割当・再試行**する（手順 4・5 で同じ台帳を共有）。大量成分は 100 件バッチ（手順 3-1）と整合させ、取得時点を `metadata` に記録する。**「取得可能分のみ載せる」のは全再試行後もなお `failed` が残る場合に限り**、その製品×版数を evidence に明示して当該タスクは `done` にせず `downgraded`（理由・失敗対象付き）にする（部分取得で `done`/`empty-verified` にしない・〈参照 J-2〉）。
+7. **公開 CVE の Web 取得も重複排除・まとめ取得（ソース別並列予算 /〈参照 M〉）**。`runtimeInventory[]` / OS 版数を **製品×版数で一意化**してから NVD/ディストリ・ベンダ/MITRE/GHSA に問い合わせ、**〈参照 M〉のソース別並列予算（NVD 無キー=4／APIキー有り=8–10、他ソースは各 6–8。多様な componentType では実効 6–8 並列。429 を受けたソースは予算を一時半減）**（または CVE ルックアップ・ワーカー〈参照 N〉）で fetch する。**fetch 台帳（fetchLedger）は親 Agent が保持**し、各 製品×版数×URL を `pending`/`succeeded`/`failed` で管理する。**重複取得の抑止は `succeeded` の項目にのみ適用**し、`failed`（429/タイムアウト/権限）は重複禁止にせず**指数バックオフで再割当・再試行**する（手順 4・5 で同じ台帳を共有）。大量成分は 100 件バッチ（手順 3-1）と整合させ、取得時点を `metadata` に記録する。**「取得可能分のみ載せる」のは全再試行後もなお `failed` が残る場合に限り**、その製品×版数を evidence に明示して当該タスクは `done` にせず `downgraded`（理由・失敗対象付き）にする（部分取得で `done`/`empty-verified` にしない・〈参照 J-2〉）。
 8. **書き込みは親 Agent が直列・決定論マージ（競合防止）**。並列に走るのは fetch（READ）のみ。各トラック/バッチ/ワーカーの結果は**親 Agent が配列ごとの安定キー（〈参照 B〉）で重複排除して安定順にマージ**し、`findings.json` / `progress.md` へ**直列に**書き込む（複数 worker から同一ファイルを同時に書かない）。完了順に依存せず同じ入力なら同じ結果になる（重複所見・順序ブレを作らない）。
 9. **計時（evidence の非破壊拡張）**。各タスク/トラック/バッチに `startedAt` / `endedAt` / `durationSec` / `resultCount` / `retryCount` を `collectionPlan[].evidence`（既存文字列規約の拡張・JSON 構造は非破壊）と `progress.md` に記録し、どこがボトルネックかを可視化する（外部 API 遅延も evidence に記録）。
 
@@ -400,7 +401,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - **必ず選択肢形式**で質問する（自由記述前提の曖昧な質問にしない）。**VS Code の質問 UI（`vscode_askQuestions` 等・クリックで選べる選択肢）を優先**し、使えない環境では **番号付きの選択肢**をテキストで提示する。現在のコンテキスト（`az account show` の既定サブスク/RG）を選択肢に反映し、既定値も示す。複数該当は「複数選択可」と明示。
 - **使う場面と頻度**:
   - **例1（実行前の最終確認）** … 原則、実行前に必ず 1 回提示（対象範囲と収集能力を示して承認を得る）。承認後は最後まで自律実行。
-  - **例2（スコープの確認）** … 対象が未指定・曖昧なときだけ、例1 の前に先行して対象を確定。
+  - **例2（スコープの確認）** … **〈参照 L〉で一意に解決できないときだけ**（名前が複数一致 / 0 件、または未指定で候補複数）、例1 の前に先行して対象を確定。GUID 判定・環境照合で一意に解決できるときは省略する。
   - **例3（収集能力が限定的な場合の続行確認）** … 例外用。通常は既定で自動フォールバックして継続し、提示しない。
 
 例1: 実行前の最終確認（原則・実行前に 1 回）
@@ -413,7 +414,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 2. 変更する（範囲や前提を選び直す）
 ```
 
-例2: スコープの確認（対象が未指定・曖昧なときのみ・例1 の前に）
+例2: スコープの確認（〈参照 L〉で一意に解決できないときのみ・例1 の前に）
 
 ```text
 棚卸の対象範囲を選択してください（番号で回答）:
@@ -540,7 +541,32 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
 
 - 手順 6-3 の検証(14)で `progress.md` の全項目完了（手順 1〜7・G0〜G4・テンプレ準拠チェックに `未`/`NG`/未チェック `[ ]` が残っていない）を確認する。手順 7（参照 H）でも点検する。
 
-### 参照 L. CVE ルックアップ・ワーカー（サブエージェントによる並列化）
+### 参照 L. スコープ解決の決定論手順（手順 1・往復削減）
+
+手順 1 のスコープ確定を **決定論的・簡潔**にし、利用者との往復と待ち時間を削減する。テナント / サブスクリプション ID は **GUID フォーマット**（`8-4-4-4-12` の 16 進）で定型なので、これを使って「ID か名前か」を即座に分類し、名前ならログイン環境から一意に解決する。**READ 専用の原則は不変**。**実 ID をリポジトリにハードコードせず、記憶するのはフォーマット（GUID 正規表現）だけ**で、実値は環境（`az account list` 等）から解決する（Public リポジトリ方針は不変）。
+
+1. **入力の分類（フォーマット判定）**
+   - GUID 正規表現: `^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$`
+   - テナント / サブスクリプションの各入力トークン: **GUID に一致 → ID として扱う** / **一致しない（非空）→ 名前として扱う**。
+   - **RG は GUID ではないため常に名前として扱う**。
+2. **ID の照合（環境に存在するか確かめる）**
+   - サブスク ID: `az account list --query "[?id=='<SUBSCRIPTION_ID>']"`（または Azure MCP）に存在すれば **採用**、無ければ「ログイン環境に無い」と提示（例2 へフォールバック）。
+   - テナント ID: `az account tenant list --query "[?tenantId=='<TENANT_ID>']"` に存在すれば **採用**、無ければ「ログイン環境に無い」と提示（例2 へフォールバック）。
+3. **名前の解決（環境から一致を探す）**
+   - サブスク名: `az account list --query "[?name=='<name>']"` で完全一致を探す。**1 件 → 採用**、**複数 / 0 件 → 例2 で選択肢提示**（部分一致候補も含める）。
+   - テナント名: `az account tenant list` の `displayName` で完全一致を探す（`tenantId` で重複排除）。**1 件 → 採用**、**複数 / 0 件、または表示名が取得できない → ID で確認（フォールバック）**。
+4. **RG の解決**
+   - 範囲が **サブスク配下の全 RG** なら個別 RG の解決は不要（`analysisScope=全 RG`）。**単一 RG 指定時のみ**次で解決する。
+   - `az group show -n <RESOURCE_GROUP> --subscription <SUBSCRIPTION_ID>` で存在確認 → 存在すれば **採用**、無ければ `az group list` から候補提示（例2）。
+5. **未指定時の既定（現在のコンテキスト）**
+   - テナント / サブスク未指定 → `az account show` の現在の既定を採用候補にする。
+6. **確認の集約（簡潔化）**
+   - 上記で **テナント / サブスク / RG（または『全 RG』）が一意に解決できたら、〈参照 G〉例2（スコープ選択）を省略**する。以降は手順 2（収集能力の判別）を経て、**例1（実行前の最終確認）を 1 回だけ**提示 → 承認 → 手順 3 以降へ（例1 は対象範囲＋収集能力を示すため手順 2 の後に提示・〈自律実行の原則〉）。
+   - **一意に解決できない**（名前が複数一致 / 0 件、または未指定で候補複数）場合のみ、例1 の前に例2 を提示して対象を確定する。
+7. **効率化（再照会を避ける）**
+   - `az account show` / `az account list` / `az group list` は必要なものだけを可能な限りまとめて取得し、再照会を避ける。解決結果は手順 3 で作成する `findings.json` の `metadata`（`tenant` / `subscription` / `resourceGroup` / `analysisScope`）に反映し、以降 **再解決しない**。
+
+### 参照 N. CVE ルックアップ・ワーカー（サブエージェントによる並列化）
 
 公開 CVE 照合（手順 4・5 / 〈参照 E〉）を、**1 つの製品×版数を入力に取り公開ソースの CVE/EOL を調べて構造化結果を返すサブエージェント**
 [`azure-cve-lookup-worker`](./002-cve-lookup-worker.agent.md) に委譲し、**複数インスタンスを並列**に走らせて短縮する（`ForEach-Object -Parallel` の代替・併用手段。どちらを使っても判定精度・出力構造・不変制約は同一）。
@@ -553,7 +579,7 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
 
 ### 参照 M. ソース別並列予算と適応制御（並列度の決め方）
 
-公開 CVE/EOL 照合（手順 4・5 /〈参照 E〉手順 7 /〈参照 L〉）の並列度は、**グローバル固定値ではなく照合先ソースごとの同時実行予算（perSourceBudget）**で決める。旧仕様の「最大 4 並列」は NVD の無キー・レート制限に合わせた保守値であり、サブエージェント化しても**各ワーカーは結局同じ公開ソースへ GET する**ため、単純に総並列数だけを増やすと特定ソース（特に NVD）で HTTP 429 が多発する。そこで**ボトルネックとなるソース単位で同時数を配分**する。
+公開 CVE/EOL 照合（手順 4・5 /〈参照 E〉手順 7 /〈参照 N〉）の並列度は、**グローバル固定値ではなく照合先ソースごとの同時実行予算（perSourceBudget）**で決める。旧仕様の「最大 4 並列」は NVD の無キー・レート制限に合わせた保守値であり、サブエージェント化しても**各ワーカーは結局同じ公開ソースへ GET する**ため、単純に総並列数だけを増やすと特定ソース（特に NVD）で HTTP 429 が多発する。そこで**ボトルネックとなるソース単位で同時数を配分**する。
 
 - **並列単位はソース別の同時 GET 数**: ワーカー数 ≒ 各ソースへの同時リクエスト数。親 Agent は `fetchLedger` の `pending` を、その製品×版数の**主ソース（`componentType` で決定）ごとの残予算**の範囲でワーカーに割り当てる。
 - **ソース別の既定予算（同時実行の上限）**:
@@ -577,4 +603,4 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
 エージェント **`azure-config-inventory-analyst`** を選択し、対象（テナント / サブスクリプション / RG）を指定する。
 棚卸から脆弱性照合・パッチ判定までを通しで実行できるほか、フェーズ別プロンプト
 （`/azure-inventory-collection`, `/azure-vulnerability-assessment`, `/azure-patch-assessment`）を個別に実行することもできる。
-公開 CVE 照合は、必要に応じて CVE ルックアップ・ワーカー **`azure-cve-lookup-worker`**（〈参照 L〉）を複数並列に呼び出して短縮できる（READ 専用・出力は不変）。
+公開 CVE 照合は、必要に応じて CVE ルックアップ・ワーカー **`azure-cve-lookup-worker`**（〈参照 N〉）を複数並列に呼び出して短縮できる（READ 専用・出力は不変）。
