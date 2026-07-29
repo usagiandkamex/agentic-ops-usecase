@@ -11,7 +11,7 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 ## 全体像
 
 - **流れ**: ① スコープ確認 → ② 収集能力の判別 →〈実行前の最終確認（承認）〉→ ③ 棚卸収集 → ④ 脆弱性照合 → ⑤ パッチ判定 → ⑥ レポート生成（検証ゲート）→ ⑦ 最終レビュー。
-- **中核成果物**: `findings.json`（単一のデータ源。③で作り始め④〜⑥で追記・確定）→ HTML 4 ページ＋CSV 4 種を生成。
+- **中核成果物**: `findings.json`（単一のデータ源。③で作り始め④〜⑥で追記・確定）→ HTML 3 ページ（index / inventory / remediation）＋CSV 4 種を生成。
 - **収集し損ねを防ぐ切れ目ゲート**: ②で `利用可` の経路から必須収集タスクを `collectionPlan[]` に materialize し、各手順の切れ目（②→③→④→⑤→⑥）で証跡付きに消化されるまで先へ進めない（〈参照 J〉）。
 - **進捗トラッキング `progress.md`**: ③冒頭で `report-template/progress.md` を `read_file` で読み `create_file` で作成し、各手順の切れ目で `replace_string_in_file` により更新・自己検査してワークフロー遵守（手順スキップ・テンプレ改変・スクリプト生成の防止）を可視化する（〈参照 K〉）。
 - **確認は原則 1 回**（実行前の最終確認）。承認後は自律実行。**全工程 READ 専用**。
@@ -62,11 +62,11 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 - 成果物は **`report-template/` のテンプレートを `read_file` で読み込み、`{{TOKEN}}` と `BEGIN/END` 区域・`{{*_ROWS}}` を実データで置換した完成ファイルを `create_file` で書き出す**
   （`Copy-Item` 等のシェルコピー・生成スクリプトで作らない＝未置換が残る／スクリプト作成は禁止。詳細は上記「成果物は create_file と編集で作る」）。
 - **対象は対象 RG 内の全リソース**（`inventory[]` に全列挙）。`category` は機能別 8 分類 `Compute`/`AppRuntime`/`Container`/`Data`/`Network`/`SecurityIdentity`/`Monitoring`/`Other`（★=版数/パッチ管理の主対象: Compute/AppRuntime/Container/Data）。
-- **ページの並び順**: 概要(index) → 棚卸インベントリ → 是正が必要な項目（重要度高・棚卸の直後）→ セキュリティ構成推奨。ランタイムは独立ページにせず棚卸インベントリに統合。
+- **ページの並び順**: 概要(index) → 棚卸インベントリ → 是正が必要な項目（重要度高・棚卸の直後。EOL・OS パッチ・セキュリティ構成推奨をこのページに集約）。ランタイムは独立ページにせず棚卸インベントリに統合。セキュリティ構成推奨は独立ページにせず remediation 下部に統合（CSV は別ファイルのまま）。
 - **全件掲載（省略禁止）・テンプレ改変禁止**: BEGIN/END 区域は対応配列の全要素を 1 行ずつ展開する（`inventory[]` が 57 件なら 57 行。「その他 N リソース」のような集約行を作らない）。テンプレートの見出し・列・構造を改変しない（独自 HTML を書き起こさない）。
 - **空セクションを消さない（Issue #4 対応・セクション保持）**: 区域が 0 件でも `<h2>`・テーブルを削除せず、`<tbody>` を空にしない。各テンプレ先頭コメントに記載のフォールバック行 `<tr><td colspan="<列数>" class="empty">該当なし</td></tr>` を **1 行だけ**出力してセクションを残す。**「該当なし」は収集実施の上で実際に 0 件のときのみ**。Defender / Update Manager が未構成・参照不可で収集・判定できない場合は「確認不可（<capability> 未有効）」と明示する（`capabilityDetection` と矛盾させない）。本ルールは **HTML 限定**で、CSV は 0 件ならヘッダ行のみ・`findings.json` の配列は空配列のまま（`該当なし` を合成レコード/要素にしない）。index のサマリ件数は 0 でも数値 `0` を表示する。
 - **文字コード（Windows 前提）**: CSV 4 種は **UTF-8 (BOM 付き)**（`create_file` 後に `Set-Content -Encoding utf8BOM` で再保存。先頭 3 バイト=239,187,191）。HTML / `findings.json` は BOM 不要。CSV はカンマ・改行・二重引用符を含む値を二重引用符で囲む（RFC 4180・列ズレ防止）。
-- **機械的検証ゲート（必須・全合格まで確定/提示しない）**: 保存後に、成果物（HTML/CSV/`findings.json`。`progress.md` は説明用にマーカーを含むため除外）で `{{...}}` / `<!-- BEGIN/END -->` / 先頭コメントが **0 件**、CSV 4 種が **BOM 付き**、`findings.json` が **有効な JSON**、**CSV 各行の列数がヘッダと一致**、**`inventory.csv` の行数・`inventory[]` の件数・`summary.totalResources`（＝`az resource list` の権威件数）の 3 者が一致**（件数の固定・〈参照 I〉）、**`capabilityDetection` が「利用可」の経路で対応配列が空なら `consistencyChecks[]` に降格/0 件確定の理由が記録され矛盾が無い**、**`collectionPlan[]` に `pending` が 0 件（全タスク terminal＋証跡付き・収集ゲート G4）**（〈参照 J〉）、**各ページのテーブル数がテンプレートどおり（index=2 / inventory=2 / remediation=3 / security-recommendations=1）で空の `<tbody></tbody>` が 0 件**、**各 HTML に `<footer>` と `class="crumb"` があり `<style>` を削除・簡略化していない（テンプレ逐語複製）**、**`inventory[].issue` が全件 `要対応/要判断/なし`（空文字なし）**、**`progress.md` が存在し手順 1〜7・G0〜G4 が完了マーク（〈参照 K〉）**であることを端末の READ コマンドで確認する。不合格なら当該ファイルを再生成し再検証する。
+- **機械的検証ゲート（必須・全合格まで確定/提示しない）**: 保存後に、成果物（HTML/CSV/`findings.json`。`progress.md` は説明用にマーカーを含むため除外）で `{{...}}` / `<!-- BEGIN/END -->` / 先頭コメントが **0 件**、CSV 4 種が **BOM 付き**、`findings.json` が **有効な JSON**、**CSV 各行の列数がヘッダと一致**、**`inventory.csv` の行数・`inventory[]` の件数・`summary.totalResources`（＝`az resource list` の権威件数）の 3 者が一致**（件数の固定・〈参照 I〉）、**`capabilityDetection` が「利用可」の経路で対応配列が空なら `consistencyChecks[]` に降格/0 件確定の理由が記録され矛盾が無い**、**`collectionPlan[]` に `pending` が 0 件（全タスク terminal＋証跡付き・収集ゲート G4）**（〈参照 J〉）、**各ページのテーブル数がテンプレートどおり（index=2 / inventory=2 / remediation=4）で空の `<tbody></tbody>` が 0 件**、**各 HTML に `<footer>` と `class="crumb"` があり `<style>` を削除・簡略化していない（テンプレ逐語複製）**、**`inventory[].issue` が全件 `要対応/要判断/なし`（空文字なし）**、**`progress.md` が存在し手順 1〜7・G0〜G4 が完了マーク（〈参照 K〉）**であることを端末の READ コマンドで確認する。不合格なら当該ファイルを再生成し再検証する。
 
 ## 保存とレビュー
 
