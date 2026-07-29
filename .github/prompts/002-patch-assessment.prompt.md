@@ -31,7 +31,7 @@ agent: 'azure-config-inventory-analyst'
 
 - `patchAssessment[]`: `resource, missingCritical, missingSecurity, missingOther, judgment, recommendation`（`recommendation` は提示のみの推奨手順）。
 - 未適用の重要パッチは `vulnerabilities[]` に `findingType=PatchMissing` / `source=UpdateManager` の項目として追記する。
-- 最終的に `remediation.html` の「OS パッチ適用可否」節と `vulnerabilities.csv` に反映される（生成は手順 6・出力仕様は〇参照 F〉）。
+- 最終的に `remediation.html` の「OS パッチ適用可否」節と `vulnerabilities.csv` に反映される（生成は手順 6・出力仕様は〈参照 F〉）。
 - **セクション保持（Issue #4）**: `patchAssessment[]` が 0 件でも `remediation.html` の「OS パッチ適用可否」節は削除せず残し、テンプレのフォールバック行で「該当なし」を表示する。Update Manager 未構成・結果なしで判定できない場合は「確認不可（Update Manager 未有効）」と明示する（`findings.json` の配列は空配列のまま）。
 
 ## レビュー 5（保存前に必須）

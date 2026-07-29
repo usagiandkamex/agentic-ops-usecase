@@ -395,7 +395,7 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
 5. **テンプレート準拠・文字コードチェック**: 全 HTML/CSV/JSON が `report-template/*` を read_file→置換→create_file で生成したもので、`{{TOKEN}}` / `<!-- BEGIN/END -->` / 先頭コメントが 0 件か（手順 6-3 の検証ゲートに合格したか）。**テンプレートの見出し・列・構造を改変していないか（独自 HTML を書き起こしていないか）。`<footer>` / `<span class="crumb">` / `<style>` を削除・簡略化していないか（検証(12)）。各 HTML の `<h2>` セクションが全て残り、必須 `<!-- SECTION: x -->` アンカーが欠落していないか（検証(15)・「ランタイム / ソフトウェア明細」等のセクション消失防止）。findings は `findings.json` の 1 ファイルのみで `findings-updated.json` 等の別名がないか**。HTML タブ相互リンクが機能し、CSV は各行の列数がヘッダと一致（カンマ含みは二重引用符囲み・列ズレなし）し **UTF-8 (BOM 付き)** か。`findings.json` が有効な JSON か。
 6. **フォールバック整合・整合性チェック**: 収集能力の判別結果（Defender / Update Manager の有無）と、実際に用いた情報源・限界の記述が一致するか。無い結果を捧造していないか。**利用可なのに空になっていないか**: Defender=利用可なら `runtimeInventory` / `securityRecommendations`、Update Manager=利用可なら `patchAssessment` を実際に収集したか（利用可なのに空＋「MDVM 未有効」等の矛盾した理由を書いていないか）。**手順 3〜5 の実収集結果と `capabilityDetection` の食い違いが `consistencyChecks[]` に記録・解消されているか**（〈参照 I〉）。**収集タスク契約 `collectionPlan[]` に `pending` が残っていないか（全タスク terminal＋証跡付き・収集ゲート G4 に合格したか）**（〈参照 J〉）。`利用可` のタスクを証跡なしに `empty-verified` にしていないか（＝収集し損ねを 0 件と偽っていないか）。
 7. **機密チェック**: シークレット / パスワード / 接続文字列 / 個人のメール等を含めていないか（実値でも記載しない）。
-8. **保存チェック**: 保存先が `reports/<YYYYMMDD-HHmmss>/`（JST 命名）で、HTML 3 ページ・CSV 4 種・`findings.json` が揃い、既存フォルダを上書きしていないか。**`progress.md` が存在し、手順 1〜7・ゲート G0〜G4・テンプレ準拠チェックが全て完了マークか（検証(14)・〇参照 K〉）。**
+8. **保存チェック**: 保存先が `reports/<YYYYMMDD-HHmmss>/`（JST 命名）で、HTML 3 ページ・CSV 4 種・`findings.json` が揃い、既存フォルダを上書きしていないか。**`progress.md` が存在し、手順 1〜7・ゲート G0〜G4・テンプレ準拠チェックが全て完了マークか（検証(14)・〈参照 K〉）。**
 
 ### 参照 I. 権威リストと整合性チェック（件数の固定・capabilityDetection 照合）
 
@@ -429,7 +429,7 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
   `item`（例: `inventoryCount` / `defenderSoftwareInventory` / `updateManagerAssessment` / `resourceGraphCount`）、
   `expected`（例: `az resource list=57` / `defenderSoftwareInventory=利用可`）、`actual`（例: `inventory[]=57` / `softwareinventories=0 件`）、
   `result`（`整合` / `不整合` / `参考`。Resource Graph との件数差など子/プロキシの扱い差で正常に生じるものは `参考`）、`resolution`（解消内容。例: `再照会で 0 件確定` / `参照不可へ降格` / `件数は az resource list を採用`）。
-- `consistencyChecks[]` は HTML / CSV には出力しない（中間データ）。ただし整合性の要点（降格や anomaly があれば）は `metadata.collectionMethod` や `consistencyChecks[]` に記録して読み手に伝える。
+- `consistencyChecks[]` は HTML / CSV には出力しない（中間データ）。ただし整合性の要点（降格や anomaly があれば）は、出力される `metadata.collectionMethod` に反映して読み手に伝える。
 
 ### 参照 J. 収集タスク契約（capability→必須収集）と切れ目ごとの収集ゲート
 
