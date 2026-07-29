@@ -44,7 +44,7 @@ agent: 'azure-config-inventory-analyst'
 
 ## 出力（`findings.json`）
 
-- `inventory[]`（全リソース）: `resourceName, resourceType, category, issue, resourceGroup, location, osType, osOrImageVersion, runtimeOrEngine, runtimeVersion, extensionsOrImages, collectionSource, notes`
+- `inventory[]`（全リソース）: `resourceName, resourceType, category, issue, resourceGroup, location, runtime, extensionsOrImages, collectionSource`（`runtime` は VM→OS / App Service 等→ランタイム / マネージド DB→DB エンジンの版数を単一列に集約）
 - `runtimeInventory[]`: `resourceName, resourceType, component, softwareName, version, vendor, source`
 - `issue`（課題）は **手順 6 で確定**する（脆弱性照合・パッチ判定の結果を集約。基準は〈参照 B〉）。この段階では暫定でよい。
 - `collectionSource` の例: `ResourceGraph` / `az` / `Defender` / `UpdateManager`。取得できない項目は「取得不可（Reader の範囲外）」と記載。
