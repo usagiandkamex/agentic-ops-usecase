@@ -152,8 +152,8 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - **権威リストの記録（証跡）**: 権威列挙の**取得方式・タイムアウト値・試行回数・ページ数・重複排除前後の件数・`nextLink` 完走有無・所要時間・フォールバック理由**を `metadata.authoritativeEnumeration` と `collectionPlan[].evidence` に記録し、件数を `summary.totalResources` に設定する（`metadata.collectionMethod` に取得方式の要約も含める）。Resource Graph など他経路との件数差は子/プロキシの扱い差で正常に生じるため、**不整合ではなく参考情報（informational）**として `consistencyChecks[]` に記録する（〈参照 I〉）。
 - **両経路とも失敗した場合（ハードストップ）**: 部分データを破棄し、`collectionPlan[]` の `Inventory:authoritativeResourceEnumeration` を **`failed`** にして **G1 を通過させず**、レポート生成前に停止する（不完全なレポートを生成しない）。
 - **0 件時の裏取り（必須・0 件のときのみ）**: ① `az account show` で接続スコープ確認、② `az group show -n <RESOURCE_GROUP> --subscription <SUBSCRIPTION_ID>` で RG 存在確認、
-  ③ 別経路（`az graph query -q "resources | where resourceGroup =~ '<RESOURCE_GROUP>'"` と Azure MCP の group resource list）で再列挙し件数を突き合わせる。
-  **RG 存在確認とページング完走の両方を確認できた場合のみ `empty-verified`（存在する空 RG）**とし、確認できなければ `failed`（存在しない RG／未完走と区別）。各経路の件数・接続スコープを根拠として明記する。食い違いは anomaly として記録し、フィルタ条件を見直して再取得する。
+  ③ **権威列挙のページング完走（`nextLinkCompleted=true`）** を確認する（`az resource list` 正常終了または ARM REST で最終 `nextLink` まで到達）。
+  **RG 存在確認とページング完走の両方を確認できた場合のみ `empty-verified`（存在する空 RG）**とし、確認できなければ `failed`（存在しない RG／未完走と区別）。接続スコープを根拠として明記する。別経路（Resource Graph / Azure MCP）での確認は参考情報として許容するが `empty-verified` 判定の必須条件ではない。
 
 - **バッチ分割（100 件超の高速化・重要）**: **正典確定後**、権威件数が **100 件を超える場合、`resourceId` 集合を 100 件ずつのバッチに分割**して以降の詳細照会・登録を進める。各バッチで 3-2 の詳細照会→`inventory[]`/`runtimeInventory[]` への逐次追記を完了し、`progress.md` のバッチ進捗（`N/M バッチ完了`）を更新してから次バッチへ進む。`metadata` に `batchSize=100` と `batchCount` を記録する。**バッチは詳細照会の単位であり、件数の正典は常に権威列挙全体**（バッチ分割で件数を増減しない）。100 件以下なら 1 バッチ扱い。
 
@@ -491,7 +491,8 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
      ```powershell
      $deadline=(Get-Date).AddMinutes(15); $tmp=[IO.Path]::GetTempFileName()
      $p=Start-Process az -ArgumentList 'resource','list','--subscription','<SUBSCRIPTION_ID>','--resource-group','<RESOURCE_GROUP>','--query','[].{id:id,name:name,type:type,location:location}','-o','json' -RedirectStandardOutput $tmp -NoNewWindow -PassThru
-     if(-not $p.WaitForExit(120000)){ taskkill /PID $p.Id /T /F | Out-Null; $reason='timeout' } elseif($p.ExitCode -ne 0){ $reason="exit=$($p.ExitCode)" } else { try{ $res=@(Get-Content -Raw $tmp | ConvertFrom-Json); $reason=$null }catch{ $reason='json-parse' } }
+     $tms=[int][Math]::Min(120000,[Math]::Max(0,($deadline-(Get-Date)).TotalMilliseconds))
+     if(-not $p.WaitForExit($tms)){ taskkill /PID $p.Id /T /F | Out-Null; $reason='timeout' } elseif($p.ExitCode -ne 0){ $reason="exit=$($p.ExitCode)" } else { try{ $res=@(Get-Content -Raw $tmp | ConvertFrom-Json); $reason=$null }catch{ $reason='json-parse' } }
      Remove-Item $tmp -ErrorAction SilentlyContinue  # $reason が非 null なら ARM REST へフォールバック
      ```
 2. **ARM REST ページングへフォールバック**（`Resources - List By Resource Group`）:
