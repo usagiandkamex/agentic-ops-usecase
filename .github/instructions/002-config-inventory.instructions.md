@@ -65,7 +65,7 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 
 - 成果物は **`report-template/` のテンプレートを `read_file` で読み込み、`{{TOKEN}}` と `BEGIN/END` 区域・`{{*_ROWS}}` を実データで置換した完成ファイルを `create_file` で書き出す**
   （`Copy-Item` 等のシェルコピー・生成スクリプトで作らない＝未置換が残る／スクリプト作成は禁止。詳細は上記「成果物は create_file と編集で作る」）。
-- **生成の並列化と検証ゲート不変**: `findings.json` 確定後は HTML/CSV テンプレを並列に `read_file` し、**別々の成果物ファイルへ並列に書き出してよい**（同一ファイルを多重に書き込まない）。並列化は READ・生成の高速化のみで、**検証ゲート (1)〜(18)・収集ゲート G0〜G4・件数正典・SECTION アンカー・BOM・出力構造は一切変えない**。`collectionPlan[].evidence` には計時（`durationSec`/`retryCount` 等）を非破壊的に加える（JSON 構造・列・アンカーは不変）。
+- **生成の並列化と検証ゲート不変**: `findings.json` 確定後は HTML/CSV テンプレを並列に `read_file` してよいが、**成果物ファイルの書き込みは 1 ファイルずつ直列に行う（同一ファイルを多重・並列に書かない）**。並列化は READ・生成の高速化のみで、**検証ゲート (1)〜(18)・収集ゲート G0〜G4・件数正典・SECTION アンカー・BOM・出力構造は一切変えない**。`collectionPlan[].evidence` には計時（`durationSec`/`retryCount` 等）を非破壊的に加える（JSON 構造・列・アンカーは不変）。
 - **対象は対象 RG 内の全リソース**（`inventory[]` に全列挙）。`category` は機能別 8 分類 `Compute`/`AppRuntime`/`Container`/`Data`/`Network`/`SecurityIdentity`/`Monitoring`/`Other`（★=版数/パッチ管理の主対象: Compute/AppRuntime/Container/Data）。
 - **ページの並び順**: 概要(index) → 棚卸インベントリ → 是正が必要な項目（重要度高・棚卸の直後。EOL・OS パッチ・セキュリティ構成推奨をこのページに集約）。ランタイムは独立ページにせず棚卸インベントリに統合。セキュリティ構成推奨は独立ページにせず remediation 下部に統合（CSV は別ファイルのまま）。
 - **全件掲載（省略禁止）・テンプレ改変禁止**: BEGIN/END 区域は対応配列の全要素を 1 行ずつ展開する（`inventory[]` が 57 件なら 57 行。「その他 N リソース」のような集約行を作らない）。テンプレートの見出し・列・構造を改変しない（独自 HTML を書き起こさない）。

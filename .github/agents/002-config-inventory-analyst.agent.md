@@ -335,6 +335,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   - `securityRecommendations[]` = `resourceId + assessmentId`（無ければ `resourceId + title`）
   - `patchAssessment[]` = `resourceId`
   - `inventory[]` = `resourceId`
+  - **同一キーで内容が異なる場合の決定論タイブレーク**: `severity` の高い方（Critical>High>Medium>Low）を優先し、同値ならソース優先順位（`NVD`>`DistroSecurityTracker`>`MSRC`>`MITRE`>`GHSA`>`endoflife.date`）、なお同順なら `referenceUrl` の字句昇順で勝者を決める（完了順に依存しない）。
 - **同一スナップショットで判定**: Defender/Update Manager の再評価・再スキャン待ちをしない（結果が揃うのを待って件数を変えない）。取得タイミングの差は `metadata` に「収集時点」を明記。
 - **サマリ件数の定義（固定）**: `remediationRequired` = `要` の所見を 1 件以上持つ**リソース数（重複排除後）**。`severity` 別件数は `vulnerabilities[]` の**所見単位**（重複排除後）。`eolCount` = EOL 到達（`要`）のリソース数。
 - **`inventory[].issue` の確定（手順 6-1）**: 上記判定を各リソースへ集約し、`要対応`（`要` の所見が 1 件以上）/ `要判断`（`要` は無いが `要確認` あり）/ `なし`（すべて `不要`）を設定する。
