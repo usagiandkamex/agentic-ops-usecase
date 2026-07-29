@@ -532,10 +532,10 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
    - **RG は GUID ではないため常に名前として扱う**。
 2. **ID の照合（環境に存在するか確かめる）**
    - サブスク ID: `az account list --query "[?id=='<SUBSCRIPTION_ID>']"`（または Azure MCP）に存在すれば **採用**、無ければ「ログイン環境に無い」と提示（例2 へフォールバック）。
-   - テナント ID: `az account show` / `az account list` の `tenantId` と照合して **採用**。
+   - テナント ID: `az account tenant list --query "[?tenantId=='<TENANT_ID>']"` に存在すれば **採用**、無ければ「ログイン環境に無い」と提示（例2 へフォールバック）。
 3. **名前の解決（環境から一致を探す）**
    - サブスク名: `az account list --query "[?name=='<name>']"` で完全一致を探す。**1 件 → 採用**、**複数 / 0 件 → 例2 で選択肢提示**（部分一致候補も含める）。
-   - テナント名: ログイン中アカウントの `tenantDisplayName` / `homeTenantId` 等から一致を探す（複数アカウントは `tenantId` で重複排除）。**1 件 → 採用**、**複数 / 0 件、または表示名が取得できない → ID で確認（フォールバック）**。
+   - テナント名: `az account tenant list` の `displayName` で完全一致を探す（`tenantId` で重複排除）。**1 件 → 採用**、**複数 / 0 件、または表示名が取得できない → ID で確認（フォールバック）**。
 4. **RG の解決**
    - 範囲が **サブスク配下の全 RG** なら個別 RG の解決は不要（`analysisScope=全 RG`）。**単一 RG 指定時のみ**次で解決する。
    - `az group show -n <RESOURCE_GROUP> --subscription <SUBSCRIPTION_ID>` で存在確認 → 存在すれば **採用**、無ければ `az group list` から候補提示（例2）。
