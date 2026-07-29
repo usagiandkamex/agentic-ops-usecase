@@ -142,7 +142,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 > **出力する findings は `findings.json` ちょうど 1 ファイルのみ**。**`findings-new.json` / `findings-updated.json` / `findings_final.json` など、サフィックスや別名を付けた第 2 の findings ファイルを絶対に作らない**。更新は必ず同一の `findings.json` を編集ツールで行う（`create_file` は既存を上書きできないので、2 回目以降に別名を作ってしまう事故を防ぐ。既に別名ができてしまったら削除して `findings.json` に一本化する）。
 >
 > **作り方（厳守・R2）**: `findings.json` の中身（JSON）は **このエージェント自身が組み立て、`create_file`（新規）と編集ツール `replace_string_in_file`（追記・更新）で直接書き出す**。
-> **Python / PowerShell 等で findings.json を生成・整形する補助スクリプト（`.py` / `.ps1` 等）を書いたり実行したりしない**。リソース数が多くても直接組み立てて書き出す（多いときは編集ツールで配列に追記して分割投入する）。端末は Azure への READ 照会にのみ使う。
+> **Python / PowerShell 等で findings.json を生成・整形する補助スクリプト（`.py` / `.ps1` 等）を書いたり実行したりしない**。リソース数が多くても直接組み立てて書き出す（多いときは編集ツールで配列に追記して分割投入する）。端末は **Azure への READ 照会**・**CSV の BOM 付与**・**権威列挙の有界実行（一時ファイルへの stdout 出力とタイムアウト時の `taskkill /T /F` によるプロセスツリー終了。〈参照 I-4〉）**にのみ使う（一時ファイル出力とプロセス終了は補助スクリプトの新設ではないローカル端末操作として許可。Azure は READ 専用のまま）。
 
 **3-1. RG 内リソースの確実な全列挙（有界な権威列挙＝`az resource list` ＋ ARM REST フォールバック）**
 
@@ -249,9 +249,13 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   $pend=@($j.collectionPlan | Where-Object { $_.status -eq 'pending' }).Count; $fail=@($j.collectionPlan | Where-Object { $_.status -eq 'failed' }).Count
   if($blank -ne 0 -or -not $trOk -or $ids.Count -ne $distinct -or $distinct -ne [int]$ae.distinctCount -or $distinct -ne $j.inventory.Count -or $distinct -ne $tr -or $distinct -ne $csv -or [int]$ae.rawCount -lt [int]$ae.distinctCount -or $pend -ne 0 -or $fail -ne 0){ "NG: 件数不変条件 空白id=$blank distinct=$distinct distinctCount=$($ae.distinctCount) inv=$($j.inventory.Count) total=$($j.summary.totalResources) csv=$csv raw=$($ae.rawCount) pending=$pend failed=$fail" }  # 出力なしが期待（distinct resource IDs = distinctCount = inventory[] = totalResources = inventory.csv、pending=failed=0）
   (Get-ChildItem "$d/findings*.json").Count  # 期待 1（別名なし）
+  # 収集タスク契約: 全 terminal タスクは evidence オブジェクト付き（done/empty-verified は resultCount が数値・downgraded は note 非空）
+  $badEv=@($j.collectionPlan | Where-Object { $_.status -in 'done','empty-verified' -and -not ($_.evidence -and ($_.evidence.resultCount -is [int] -or $_.evidence.resultCount -is [long]))}).Count
+  $badDg=@($j.collectionPlan | Where-Object { $_.status -eq 'downgraded' -and [string]::IsNullOrWhiteSpace($_.evidence.note) }).Count
+  if($badEv -ne 0 -or $badDg -ne 0){ "NG: 証跡不備 done/empty-verified で resultCount 非数値=$badEv / downgraded で note 空=$badDg" }  # 出力なしが期待
   $enum=@($j.collectionPlan | Where-Object { $_.task -eq 'Inventory:authoritativeResourceEnumeration' })
   if($enum.Count -ne 1){ "NG: 権威列挙タスクがちょうど 1 件でない（$($enum.Count) 件）" }  # 出力なしが期待
-  $es=$enum[0].status; $ae=$j.metadata.authoritativeEnumeration; $tr=[int]$j.summary.totalResources
+  $es=$enum[0].status  # $ae は L245・$tr は L248（[long]::TryParse 済み）を継続利用（再キャストしない）
   if($es -notin 'done','empty-verified'){ "NG: 権威列挙 status=$es（done/empty-verified 以外は G1 で停止）" }  # 出力なしが期待
   if($ae.nextLinkCompleted -ne $true){ "NG: nextLinkCompleted=$($ae.nextLinkCompleted)（列挙未完走のまま done/正典にしている。CLI 成功時も列挙完了として true、REST は最終 nextLink 到達で true）" }  # 出力なしが期待
   if($es -eq 'done' -and $tr -le 0){ "NG: done なのに totalResources=$tr（done は件数>0 のみ）" }  # 出力なしが期待
@@ -490,10 +494,10 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
      ```
 2. **ARM REST ページングへフォールバック**（`Resources - List By Resource Group`）:
    - **初回 URL のホストも `az cloud show --query endpoints.resourceManager -o tsv` で解決した現在の ARM endpoint から組み立てる**（`management.azure.com` をハードコードしない。Sovereign Cloud 対応）。パス例 `.../subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/resources?api-version=2021-04-01&$top=200`（**API version `2021-04-01`・ページサイズ `$top=200`**。`$top` の変数展開を避けるため URL は単一引用符で囲む）。応答 `value[]` を蓄積し、応答の **`nextLink` を最終ページまで**辿る。
-   - **各 `az rest` ページも高速経路と同じ有界ラッパ**（`Start-Process`＋`WaitForExit`＋`taskkill /PID <id> /T /F`）で実行する（直接 `az rest` を呼ぶと再びハングし得る）。**各ページのハードタイムアウト `min(120 秒, 残り時間)`**、**1 ページあたり最大試行 3 回**（初回＋再試行 2 回）。継続は解決済み `nextLink` を**単一引数として**渡す（連結・評価しない）。
-   - **timeout / 接続エラー / HTTP 408 / 429 / 5xx のみ指数バックオフ**（例 2s→4s→8s。`Retry-After` があれば尊重）で再試行し、**それ以外の 4xx は即失敗**。
-   - **`nextLink` は URI を分解して検証**: 絶対 HTTPS・**ホストが上記 ARM endpoint と完全一致**・userinfo を含まない・想定ポート・同一サブスクリプション/RG のリソースパスであること（いずれか外れたら失敗）。**不透明な `nextLink`（`&` を含む）は `Start-Process -ArgumentList` の 1 要素として渡せばシェル解釈されず単一引数として保持される**（連結・再評価しない）。
-   - **HTTP ステータス/ヘッダの取得**: `az rest` は 4xx/5xx で非ゼロ終了しエラー本文を stderr に出す。429/5xx 判定と `Retry-After` は当該エラー出力から読み取り、無ければ既定のバックオフにフォールバックする。
+   - **各 `az rest` ページも高速経路と同じ有界ラッパ**（`Start-Process`＋`WaitForExit`＋`taskkill /PID <id> /T /F`）で実行する（直接 `az rest` を呼ぶと再びハングし得る）。**各ページのハードタイムアウト `min(120 秒, 残り時間)`**、**1 ページあたり最大試行 3 回**（初回＋再試行 2 回）。継続は解決済み `nextLink` を渡す（連結・評価しない）。
+   - **timeout / 接続エラー / HTTP 408 / 429 / 5xx のみ指数バックオフ**（例 2s→4s→8s）で再試行し、**それ以外の 4xx は即失敗**。**バックオフの待機時間も全体デッドラインに従わせる**（`sleep = min(要求待機, 残り時間)`。残り時間がバックオフ待機に満たなければ待たずに即 `failed`。バックオフで全体デッドラインを超過させない）。
+   - **`nextLink` は URI を分解して検証**: 絶対 HTTPS・**ホストが上記 ARM endpoint と完全一致**・userinfo を含まない・想定ポート・同一サブスクリプション/RG のリソースパスであること（いずれか外れたら失敗）。**`nextLink` は `&` を含み、`az` は Windows で `az.cmd`（バッチ）経由のため、引数配列の 1 要素にするだけでは `&` が cmd.exe に解釈され得る**。**URL を明示的にダブルクォートで囲んで渡す**（例 `-ArgumentList 'rest','--url', ('"' + $nextLink + '"')`）ことでバッチ層が単一のリテラル引数として扱い `&` を解釈しない（「1 要素だから安全」に依存しない・連結や再評価もしない）。
+   - **HTTP ステータス/`Retry-After` の取得**: `az rest` は通常レスポンスヘッダを stderr に出さない。4xx/5xx は非ゼロ終了とエラー本文で判定し、**`Retry-After` は CLI が明示的に表面化した場合のみ採用**、取得できなければ既定の指数バックオフにフォールバックする。
    - **同一 `nextLink` が再出現したら循環エラーとして停止**（既訪 URL 集合で検出）。
    - ARM ページングは**アトミックなスナップショットではない**。並行変更下での厳密一致は主張せず、収集の**開始・終了時刻を記録**する。
 3. **正典の確定（重複排除・完走が条件）**: 高速経路成功→その集合、CLI 失敗後に REST が**最終 `nextLink` まで完走**→ REST の集合。いずれも **`id` で重複排除**（**大文字小文字を無視**して一意化。空/欠落 `id` は黙って捨てず失敗として扱う）した集合を正典とし件数を `summary.totalResources` に設定する。**最終 `nextLink` 取得前のデータを `done`／正典にしない**。REST が全ページ取得できれば CLI 失敗後も処理を継続できる。**正典が返した ID は子リソースを含め 1 件 1 行**として `inventory[]` に登録する（正典応答に**現れない**子/プロキシのみ件数対象外）。
