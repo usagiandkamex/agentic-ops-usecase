@@ -130,7 +130,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 > （全データをメモリに溜めてから一括生成しない）。手順 4・5 で `vulnerabilities[]` / `patchAssessment[]` / `securityRecommendations[]` を追記、手順 6 で `summary` と `inventory[].issue` を確定する。
 > **作成直後に、手順 2 で確定した `capabilityDetection` から必須収集タスクを `collectionPlan[]` に `pending` で書き込む**（〈参照 J〉）。以降、各タスクを実行するたびに `status` と `evidence` を更新し、切れ目ゲートで `pending` を 0 にしてから次工程へ進む。
 >
-> **進捗トラッキング `progress.md` を作る（〈参照 K〉）**: 手順 3 冒頭で `report-template/progress.md` を `read_file` で読み `reports/<YYYYMMDD-HHmmss>/progress.md` を `create_file` で作成し、以降**各手順の切れ目（手順 1→…→7・ゲート G0〜G4）で更新・自己検査**してから次工程へ進む。手順とゲートの消化状況・テンプレ準拠チェックを可視化し、手順スキップ・テンプレ改変・スクリプト生成を防ぐ。
+> **進捗トラッキング `progress.md` を作る（〈参照 K〉）**: 手順 3 冒頭で `report-template/progress.md` を `read_file` で読み `reports/<YYYYMMDD-HHmmss>/progress.md` を `create_file` で作成し、以降**各手順の切れ目（手順 1→…→7・ゲート G0〜G4）で `replace_string_in_file` により更新・自己検査**してから次工程へ進む。手順とゲートの消化状況・テンプレ準拠チェックを可視化し、手順スキップ・テンプレ改変・スクリプト生成を防ぐ。
 >
 > **`findings.json` は 1 つだけ**。**作成は最初の 1 回**（`create_file`）で、以降（手順 4・5・6 の追記・確定）は **同じファイルを編集（文字列置換）で更新**する。
 > **出力する findings は `findings.json` ちょうど 1 ファイルのみ**。**`findings-new.json` / `findings-updated.json` / `findings_final.json` など、サフィックスや別名を付けた第 2 の findings ファイルを絶対に作らない**。更新は必ず同一の `findings.json` を編集ツールで行う（`create_file` は既存を上書きできないので、2 回目以降に別名を作ってしまう事故を防ぐ。既に別名ができてしまったら削除して `findings.json` に一本化する）。
