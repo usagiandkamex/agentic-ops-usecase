@@ -21,7 +21,7 @@ agent: 'azure-config-inventory-analyst'
 ## やること
 
 1. **未適用パッチの把握**: 対象 VM の未適用パッチの有無・件数・分類（Critical / Security / その他）を、既存結果の READ で把握する。**手順 2 で `updateManager` が「利用可」なら `patchassessmentresources` の照会を必ず実行**して `patchAssessment[]` を埋める（省略しない）。**Defender の MDVM と同じ扱い**で、空になるのは **`updateManager=利用可` で実際に対象 VM が無い場合のみ**（`empty-verified`＝該当なし）。**`updateManager=未構成/参照不可` なら「確認不可（Update Manager 未構成）」（`downgraded`）** と明示し、`empty-verified`（該当なし）と混同しない（capabilityDetection と矛盾させない）。
-1b. **現行 OS 版数の公開 CVE 横断（Update Manager 非依存・必須）**: 各 VM の現行 OS 版数について、公開ソース（ディストリ/ベンダのセキュリティトラッカー主・NVD/MSRC 補助）で Critical/High の CVE を横断チェックし `vulnerabilities[]`（findingType=CVE）に追加する（Update Manager 未構成でも実施・該当版数が影響を受ける CVE のみ・`CVE:osLookup` タスクを消化）。**OS 版数を製品×版数で一意化し、手順 4 と共通の fetch 台帳（fetchLedger）で重複取得を避けつつ最大 4 並列バッチで fetch**、HTTP 429 / API 制限は指数バックオフで再試行する。結果は**親 Agent が `(resourceId, findingType, identifier)` キーで重複排除して安定順に決定論マージ**し（並列書き込み競合なし）、各バッチの `durationSec`/`resultCount`/`retryCount` 等を記録する（詳細は〈参照 E〉）。
+1b. **現行 OS 版数の公開 CVE 横断（Update Manager 非依存・必須）**: 各 VM の現行 OS 版数について、公開ソース（ディストリ/ベンダのセキュリティトラッカー主・NVD/MSRC 補助）で Critical/High の CVE を横断チェックし `vulnerabilities[]`（findingType=CVE）に追加する（Update Manager 未構成でも実施・該当版数が影響を受ける CVE のみ・`CVE:osLookup` タスクを消化）。**OS 版数を製品×版数で一意化し、手順 4 と共通の fetch 台帳（fetchLedger・`pending`/`succeeded`/`failed`）で重複取得を避けつつ最大 4 並列バッチ（または CVE ルックアップ・ワーカー `azure-cve-lookup-worker` を最大 4 並列）で fetch**、HTTP 429 / API 制限は指数バックオフで再試行する。結果は**親 Agent が `(resourceId, findingType, identifier)` キーで重複排除して安定順に決定論マージ**し（並列書き込み競合なし）、各バッチの `durationSec`/`resultCount`/`retryCount` 等を記録する（詳細は〈参照 E〉）。
 2. **判定区分**:
    - `適用推奨`: 未適用の Critical / Security パッチあり。
    - `適用検討`: その他の更新あり。
