@@ -6,7 +6,8 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 
 このユースケース配下で、Azure リソースの棚卸・脆弱性検知・パッチ適用可否判定を行う際の共通ルール。
 詳細な手順・定義はエージェント定義 [002-config-inventory-analyst.agent.md](../agents/002-config-inventory-analyst.agent.md)、
-テンプレート・トークン仕様は [report-template/README.md](../../usecases/002-config-inventory-vulnerability/report-template/README.md) に従う。
+テンプレート・トークン仕様は [report-template/README.md](../../usecases/002-config-inventory-vulnerability/report-template/README.md) に従う。  
+ただし **手順 3-1（権威列挙）の実行方式は本ファイルと関連プロンプトを優先**し、矛盾時は `az resource list ... -o json` の直接実行方針を採用する。
 
 ## 全体像
 
