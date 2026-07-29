@@ -40,7 +40,7 @@ agent: 'azure-config-inventory-analyst'
    **ランタイム**（(A) VM/VMSS、(B) DB ホスト VM の DB エンジン、(C) PaaS マネージド DB の DB エンジン版数、(D) App Service/Functions/AKS ランタイムを同一表 `runtimeInventory[]`（7 列・列は増やさない）に統合）を READ で収集する。(A)(B) は Defender ソフトウェアインベントリ
    `az graph query -q "securityresources | where type =~ 'microsoft.security/softwareinventories' | where id contains '<RESOURCE_GROUP>'"` で名称・版数・ベンダを抽出、(C) は `az sql db show`/`flexible-server show` の version、(D) は siteConfig の linuxFxVersion 等（区分=`ospackage`/`language`/`middleware`/`dbengine`/`runtime` で識別）を `runtimeInventory[]` に格納する。
    **手順 2 で `defenderSoftwareInventory`（MDVM）が「利用可」ならこの照会を必ず実行**して (A)(B) を埋める（省略しない）。空になるのは **`defenderSoftwareInventory=利用可` で PaaS も含め実際に該当ソフトが無い場合のみ**（`empty-verified`）。**MDVM が `未構成/参照不可` なら (A)(B) は「確認不可（MDVM 未有効）」（`downgraded`）**と明示し、`empty-verified`（該当なし）と混同しない（(C)(D) の PaaS 版数は MDVM 非依存で取得可）。
-3. **3-3 並列化**: 対象が複数のときは詳細照会を並列に実行して短縮する（すべて READ のため安全。詳細は〈参照 E〉）。端末コマンドは 1 度に 1 本、並列化はコマンド内部のジョブで。
+3. **3-3 収集ウェーブ（並列化）**: 3-1 の権威リスト確定後、独立した 4 トラックを**並列**に実行して短縮する（すべて READ のため安全）。**Track A**: MDVM `softwareinventories` → `runtimeInventory[]`（(A)(B)）、**Track D**: VM/VMSS/PaaS/App Service/AKS 詳細（版数・siteConfig・kubernetesVersion）→ `inventory[]`/`runtimeInventory[]`（(C)(D)）はこの手順で着地。**Track B**（Defender `assessments`）/ **Track C**（Update Manager `patchassessmentresources`）は fetch を早期に並列開始してよいが着地検証は手順 4/5 のゲート（`dueStep`＝検証期限）で行う。Azure 詳細照会は **`ForEach-Object -Parallel -ThrottleLimit 5`**（`$using:`）でコマンド内並列、独立ツールは 1 ターンにまとめてバッチ並列。端末コマンドは 1 度に 1 本・**無制限並列は禁止**。**書き込みは親 Agent が直列**（worker は fetch のみ・配列ごとの安定キー〈参照 B〉で決定論マージ・同一ファイル多重書込みなし）。各トラックの `startedAt`/`endedAt`/`durationSec`/`resultCount`/`retryCount` を記録する（詳細は〈参照 E〉）。
 
 ## 出力（`findings.json`）
 
@@ -59,3 +59,4 @@ agent: 'azure-config-inventory-analyst'
 - **整合性チェック**: 手順 2 の `capabilityDetection` と実収集結果が矛盾しないか（`defenderSoftwareInventory=利用可` なら `softwareinventories` を実収集、空なら再照会 → `empty-verified`（該当なし）or `downgraded`（確認不可）を確定）。MDVM 未有効を「該当なし」と混同していないか。食い違いを `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。
 - **切れ目ゲート G1（〈参照 J〉）**: `dueStep=3` のタスク（`Inventory:azResourceList`、`defenderSoftwareInventory=利用可` なら `Defender:softwareinventories`）が全て**証跡付きで terminal**（done/empty-verified/downgraded）か。`pending` が残っていれば手順 4 へ進まず、当該照会を実行する。`done` なのに `runtimeInventory[]` が空でないか。**消化後に `progress.md` の手順 3・G1 を更新したか（〈参照 K〉）。**
 - 収集操作がすべて READ だったか（書き込み・評価トリガーなし）。
+- **収集ウェーブの安全性**: 4 トラックの並列が READ 専用・`ThrottleLimit=5` で、書き込みは親 Agent 直列・決定論マージ（重複所見なし）だったか。各トラックに計時（`durationSec`/`retryCount` 等）を記録したか。
