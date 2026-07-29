@@ -29,7 +29,7 @@ agent: 'azure-config-inventory-analyst'
 
 ### 手順 3. 棚卸収集（`findings.json` を作りながら）
 
-> 手順 3 冒頭で保存先 `reports/<YYYYMMDD-HHmmss>/` を決め、`report-template/findings.json` を複製した作業用 `findings.json` を **1 つだけ**作成し、収集の進行に合わせて逐次書き込む（別名 `findings-new.json` を作らない）。
+> 手順 3 冒頭で保存先 `reports/<YYYYMMDD-HHmmss>/` を決め、`report-template/findings.json` を `read_file` で読みトークン置換した作業用 `findings.json` を `create_file` で **1 つだけ**作成し、収集の進行に合わせて逐次書き込む（別名 `findings-new.json` を作らない）。同時に `report-template/progress.md` を `read_file` で読み、`create_file` で `progress.md` を作成し、**各手順の切れ目で更新・自己検査**してから次へ進む（〈参照 K〉）。テンプレは参照元で保存先に複製せず、**生成スクリプト（`.ps1`/`.py` 等）は作らず**既存更新は `replace_string_in_file` で行う（〈参照 K〉）。
 
 1. **3-1 全列挙（`az resource list` を唯一の権威ソースに）**: `az resource list --subscription <SUBSCRIPTION_ID> --resource-group <RESOURCE_GROUP> -o json` を**唯一の権威ソース（single source of truth）**とし、その `id` 集合で棚卸対象を確定する。
    **件数の固定（実行セッション間でブレさせない）**: `inventory[]` の件数・`summary.totalResources` はこの権威件数と**必ず一致**させる。Resource Graph / Azure MCP は**版数などの詳細補完と 0 件裏取り専用**で件数を増減させない（正典は常に `az resource list`）。
@@ -56,5 +56,5 @@ agent: 'azure-config-inventory-analyst'
 - `az resource list` を唯一の権威ソースにし、**`inventory[]` 件数が `az resource list` 件数（＝`summary.totalResources`）と一致**するか（実行セッション間でブレないか）。0 件時は接続スコープ＋3 経路で裏取り・根拠明記したか。
 - 対象 RG 内の全リソースを `inventory[]` に登録し、★カテゴリの版数を取得したか。取得不可を明示したか。
 - **整合性チェック**: 手順 2 の `capabilityDetection` と実収集結果が矛盾しないか（`defenderSoftwareInventory=利用可` なら `softwareinventories` を実収集、空なら再照会 → `empty-verified`（該当なし）or `downgraded`（確認不可）を確定）。MDVM 未有効を「該当なし」と混同していないか。食い違いを `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。
-- **切れ目ゲート G1（〈参照 J〉）**: `dueStep=3` のタスク（`Inventory:azResourceList`、`defenderSoftwareInventory=利用可` なら `Defender:softwareinventories`）が全て**証跡付きで terminal**（done/empty-verified/downgraded）か。`pending` が残っていれば手順 4 へ進まず、当該照会を実行する。`done` なのに `runtimeInventory[]` が空でないか。
+- **切れ目ゲート G1（〈参照 J〉）**: `dueStep=3` のタスク（`Inventory:azResourceList`、`defenderSoftwareInventory=利用可` なら `Defender:softwareinventories`）が全て**証跡付きで terminal**（done/empty-verified/downgraded）か。`pending` が残っていれば手順 4 へ進まず、当該照会を実行する。`done` なのに `runtimeInventory[]` が空でないか。**消化後に `progress.md` の手順 3・G1 を更新したか（〈参照 K〉）。**
 - 収集操作がすべて READ だったか（書き込み・評価トリガーなし）。

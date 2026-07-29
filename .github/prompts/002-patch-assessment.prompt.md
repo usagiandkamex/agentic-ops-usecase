@@ -38,6 +38,6 @@ agent: 'azure-config-inventory-analyst'
 
 - 各判定に根拠（未適用パッチ件数・分類、または情報なしの理由）を付けたか。
 - **整合性チェック**: 手順 2 の `capabilityDetection` と実収集結果が矛盾しないか（Update Manager=利用可なのに `patchAssessment[]` が空になっていないか）。食い違いは `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。
-- **切れ目ゲート G3（〈参照 J〉）**: `dueStep=5` のタスク（UpdateManager=利用可なら `UpdateManager:patchassessmentresources`）が全て**証跡付きで terminal** か。`pending` が残れば手順 6 へ進まず照会を実行する。証跡なしに `empty-verified` にしていないか。
+- **切れ目ゲート G3（〈参照 J〉）**: `dueStep=5` のタスク（UpdateManager=利用可なら `UpdateManager:patchassessmentresources`）が全て**証跡付きで terminal** か。`pending` が残れば手順 6 へ進まず照会を実行する。証跡なしに `empty-verified` にしていないか。**消化後に `progress.md` の手順 5・G3 を更新したか（〈参照 K〉）。**
 - 適用・評価トリガー等の書き込み操作を一切行っていないか（提示のみか）。
 - 未構成時に無い結果を捏造していないか。

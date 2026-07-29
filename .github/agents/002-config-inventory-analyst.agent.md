@@ -20,6 +20,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - **件数の正典は `az resource list`**: 棚卸対象と件数は **`az resource list` の出力を唯一の権威ソース**として固定する（実行セッションが変わっても件数がぶれないようにする）。以降の全工程はこの権威リストの `resourceId` をキーに情報を紐付ける。詳細は〈参照 I〉。
 - **整合性を蓄積情報で担保**: 手順 2 で判別した `capabilityDetection`（宣言）と、手順 3〜5 の実収集結果（成功/失敗/空）を各手順末尾で照合し、食い違いを `consistencyChecks[]` に記録して解消する（〈参照 I〉）。手順が進むごとに `findings.json` に蓄積した情報（権威リスト・capabilityDetection・inventory[]）を土台に、後工程はゼロから取り直さず**積み上げて**品質を保つ。
 - **収集し損ねを防ぐ「収集タスク契約＋切れ目ゲート」**: 手順 2 で `利用可` の経路から**必須収集タスクを `collectionPlan[]` に materialize**し、**各手順の切れ目（2→3→4→5→6）でそのタスクが証跡付きで消化されるまで先へ進めない**（〈参照 J〉）。これにより「Defender=利用可 なのに収集し忘れる」を pending の残存として検知・強制消化する。
+- **進捗トラッキング `progress.md` でワークフロー遵守を可視化**: 手順 3 冒頭で `report-template/progress.md` を `read_file` で読み `create_file` で作成し、各手順の切れ目で `replace_string_in_file` により更新・自己検査する（手順スキップ・テンプレ改変・スクリプト生成を防ぐ・〈参照 K〉）。
 - **確認は原則 1 回**（実行前の最終確認）。承認後は、エラー・ブロッカーが無い限り**停止せず最後まで自律実行**する。
 - **全工程 READ 専用**（書き込み・評価トリガーは一切しない）。
 
@@ -44,7 +45,13 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - **`findings.json` / HTML / CSV は、内容をこのエージェント自身が組み立て、`create_file`（新規作成）と編集ツール（`replace_string_in_file` 等・更新）で直接書き出す**。
   **Python / PowerShell 等で「ファイルを生成・組み立てる補助スクリプト」を書いたり実行したりしない**
   （`.py` / `.ps1` / `.sh` / `.bat` / `.cmd` / `.js` 等のスクリプトファイルを **リポジトリにも一時フォルダにも作らない**）。
-- リポジトリに書き出してよいのは **`reports/<YYYYMMDD-HHmmss>/` 配下の成果物のみ**（HTML / CSV / `findings.json`）。
+- **ハードストップ（厳守）**: findings.json / HTML / CSV を**生成・整形するスクリプト**（`.ps1` / `.py` 等）を書こうとしていると気づいたら、**その場で作業を止め**、`create_file`（新規）／`replace_string_in_file`（更新）による直接組み立てに切り替える（スクリプトを一度でも作らない・〈参照 K〉）。
+- **ファイル生成の正しい機構（`create_file` の制約への対処）**:
+  - **テンプレートは `read_file` で読む「参照元」**であり、**保存先に複製しない**（`Copy-Item` もしない）。読み込んだ内容を `{{TOKEN}}` 置換・BEGIN/END 行複製して**完成形にしてから**書き出す。
+  - **HTML 4 ページ・CSV 4 種は手順 6 で 1 回だけ生成する**ので、**完成内容を組み立てて `create_file` で 1 回だけ書き出す**（「複製してから編集」は不要・してはならない）。
+  - **既存ファイルの更新は編集ツール `replace_string_in_file` を使う**（`create_file` は新規専用で既存を上書きできない）。**同一パスへ 2 回目の `create_file` をしない**。`findings.json` は手順 3 で `create_file` 1 回 → 手順 4/5/6 は `replace_string_in_file` で追記・確定する。
+  - **大量行を 1 回で書ききれない場合の安全策**: `create_file` で骨組み＋対象 `<tbody>` 内に一意のセンチネル（例 `<!-- ROWS_HERE -->`）を置いて書き出し、`replace_string_in_file` でセンチネルを実データ行に置換（または分割追記）する。センチネルで確実にアンカーでき、未置換の残存も検知しやすい。
+- リポジトリに書き出してよいのは **`reports/<YYYYMMDD-HHmmss>/` 配下の成果物のみ**（HTML / CSV / `findings.json` / `progress.md`）。
 - **端末（`run_in_terminal`）は次の 2 用途にのみ使う**: ① Azure への **READ 照会**（`az` / `az graph query` 等）、
   ② CSV の **BOM 付与**（1 行の `Set-Content -Encoding utf8BOM` インラインコマンド）。データ整形・ファイル生成のためのスクリプトは書かない。
 - **大量データ（多数リソース）でも、`findings.json` の内容を直接組み立てて `create_file` で書き出す**（「量が多いから」を理由にスクリプト生成へ切り替えない。分割が必要なら編集ツールで追記する）。
@@ -119,9 +126,11 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 ### 手順 3. 棚卸収集（インベントリ作成 / `findings.json` を作りながら）
 
 > **`findings.json` を作りながら収集する（推奨・効率化）**: 手順 3 の冒頭で保存先 `reports/<YYYYMMDD-HHmmss>/` を決め、
-> **`report-template/findings.json` を複製した作業用 `findings.json` を作成**し、収集の進行に合わせて `inventory[]` / `runtimeInventory[]` を **逐次書き込みながら**進める
+> **`report-template/findings.json` を `read_file` で読み、作業用 `findings.json` を `create_file` で作成**し、収集の進行に合わせて `inventory[]` / `runtimeInventory[]` を **逐次書き込みながら**進める
 > （全データをメモリに溜めてから一括生成しない）。手順 4・5 で `vulnerabilities[]` / `patchAssessment[]` / `securityRecommendations[]` を追記、手順 6 で `summary` と `inventory[].issue` を確定する。
 > **作成直後に、手順 2 で確定した `capabilityDetection` から必須収集タスクを `collectionPlan[]` に `pending` で書き込む**（〈参照 J〉）。以降、各タスクを実行するたびに `status` と `evidence` を更新し、切れ目ゲートで `pending` を 0 にしてから次工程へ進む。
+>
+> **進捗トラッキング `progress.md` を作る（〈参照 K〉）**: 手順 3 冒頭で `report-template/progress.md` を `read_file` で読み `reports/<YYYYMMDD-HHmmss>/progress.md` を `create_file` で作成し、以降**各手順の切れ目（手順 1→…→7・ゲート G0〜G4）で `replace_string_in_file` により更新・自己検査**してから次工程へ進む。手順とゲートの消化状況・テンプレ準拠チェックを可視化し、手順スキップ・テンプレ改変・スクリプト生成を防ぐ。
 >
 > **`findings.json` は 1 つだけ**。**作成は最初の 1 回**（`create_file`）で、以降（手順 4・5・6 の追記・確定）は **同じファイルを編集（文字列置換）で更新**する。
 > **出力する findings は `findings.json` ちょうど 1 ファイルのみ**。**`findings-new.json` / `findings-updated.json` / `findings_final.json` など、サフィックスや別名を付けた第 2 の findings ファイルを絶対に作らない**。更新は必ず同一の `findings.json` を編集ツールで行う（`create_file` は既存を上書きできないので、2 回目以降に別名を作ってしまう事故を防ぐ。既に別名ができてしまったら削除して `findings.json` に一本化する）。
@@ -157,7 +166,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - 対象が複数のときは詳細照会を **並列**に実行して短縮する（すべて READ のため安全）。PowerShell 7 の `ForEach-Object -Parallel`（リソース ID 配列を並列で `az ... show`）、または独立した読み取りツール呼び出しを **1 ターンにまとめてバッチ並列**で実行する。
   端末コマンドは 1 度に 1 本（run_in_terminal を同時多重で呼ばない）。並列化はコマンド内部のジョブで行う。詳細は〈参照 E〉。
 
-- 🔍 **レビュー 3**: (a) `az resource list` を唯一の権威ソースにし、`inventory[]` 件数が `az resource list` 件数と一致するか（0 件時は接続スコープ＋3 経路で裏取り）。(b) 全列挙を漏れなく `inventory[]` に登録し、★カテゴリの版数を取得したか。(c) **整合性チェック**: `defenderSoftwareInventory`（MDVM）が「利用可」なら `softwareinventories` を実際に照会したか、実収集結果と `capabilityDetection` が矛盾しないか（MDVM 未有効は「確認不可」であって「該当なし」と混同しない）。矛盾は `consistencyChecks[]` に記録・解消したか。(d) **切れ目ゲート G1（〈参照 J〉）**: `dueStep=3` の `collectionPlan[]` タスク（`Inventory:azResourceList`、`defenderSoftwareInventory=利用可` なら `Defender:softwareinventories`）が**すべて証跡付きで terminal**（done/empty-verified/downgraded）か。`pending` が 1 件でも残れば手順 4 へ進まず、当該照会を実行する。(e) 取得不可を明示したか。(f) すべて READ か。
+- 🔍 **レビュー 3**: (a) `az resource list` を唯一の権威ソースにし、`inventory[]` 件数が `az resource list` 件数と一致するか（0 件時は接続スコープ＋3 経路で裏取り）。(b) 全列挙を漏れなく `inventory[]` に登録し、★カテゴリの版数を取得したか。(c) **整合性チェック**: `defenderSoftwareInventory`（MDVM）が「利用可」なら `softwareinventories` を実際に照会したか、実収集結果と `capabilityDetection` が矛盾しないか（MDVM 未有効は「確認不可」であって「該当なし」と混同しない）。矛盾は `consistencyChecks[]` に記録・解消したか。(d) **切れ目ゲート G1（〈参照 J〉）**: `dueStep=3` の `collectionPlan[]` タスク（`Inventory:azResourceList`、`defenderSoftwareInventory=利用可` なら `Defender:softwareinventories`）が**すべて証跡付きで terminal**（done/empty-verified/downgraded）か。`pending` が 1 件でも残れば手順 4 へ進まず、当該照会を実行する。**消化後に `progress.md` の手順 3・G1 を更新する（〈参照 K〉）。** (e) 取得不可を明示したか。(f) すべて READ か。
 
 ### 手順 4. 脆弱性照合
 
@@ -165,15 +174,15 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - Defender の **構成系推奨**（CVE/パッチでないもの）は `securityRecommendations[]` に別途格納する（〈参照 C〉。vulnerabilities に混ぜない）。
   **手順 2 で Defender for Cloud が「利用可」の場合は、`microsoft.security/assessments` の照会を必ず実行**して構成系推奨を `securityRecommendations[]` に格納する（省略しない）。空になるのは実際に該当所見が無い場合のみで、`capabilityDetection` と矛盾しないこと。
 - EOL 照合は endoflife.date（主）/ Microsoft Lifecycle（補助）を **Web の GET** で参照する。推測の URL は使わない。
-- 🔍 **レビュー 4**: (a) 各是正要否に根拠（CVE ID / EOL 日付 / 参照 URL / 情報源）を付けたか。(b) 版数不明・情報不足を「要確認」にしたか。(c) **整合性チェック**: Defender が「利用可」なら `assessments` を実際に照会し、`vulnerabilities[]`/`securityRecommendations[]` の収集結果が `capabilityDetection` と矛盾しないか（利用可なのに空＋「未有効」の矛盾を書かない）。矛盾は `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。(d) **切れ目ゲート G2（〈参照 J〉）**: `dueStep=4` の `collectionPlan[]` タスク（Defender=利用可なら `Defender:assessments`）が**すべて証跡付きで terminal** か。`pending` が残れば手順 5 へ進まず実行する。(e) 書き込み・スキャン起動をしていないか。
+- 🔍 **レビュー 4**: (a) 各是正要否に根拠（CVE ID / EOL 日付 / 参照 URL / 情報源）を付けたか。(b) 版数不明・情報不足を「要確認」にしたか。(c) **整合性チェック**: Defender が「利用可」なら `assessments` を実際に照会し、`vulnerabilities[]`/`securityRecommendations[]` の収集結果が `capabilityDetection` と矛盾しないか（利用可なのに空＋「未有効」の矛盾を書かない）。矛盾は `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。(d) **切れ目ゲート G2（〈参照 J〉）**: `dueStep=4` の `collectionPlan[]` タスク（Defender=利用可なら `Defender:assessments`）が**すべて証跡付きで terminal** か。`pending` が残れば手順 5 へ進まず実行する。**消化後に `progress.md` の手順 4・G2 を更新する。** (e) 書き込み・スキャン起動をしていないか。
 
 ### 手順 5. パッチ適用可否判定
 
 - 〈参照 D〉に従い、Update Manager の **既存の評価結果を READ 参照**し（有効時）、対象 VM ごとに適用可否・優先度・推奨を判定して `patchAssessment[]` に格納する。
   **手順 2 で Update Manager が「利用可」なら、`patchassessmentresources`（必要に応じて `patchinstallationresults`）の照会を必ず実行**して対象 VM を `patchAssessment[]` に格納する（省略しない）。`patchAssessment[]` が空になるのは **未構成/参照不可、または対象 VM が無い場合のみ**で、`capabilityDetection` と矛盾させない（利用可なのに空にしない）。未構成時は「情報なし」とし EOL/版数ベースの推奨に留める。
-- 🔍 **レビュー 5**: (a) 各判定に根拠（未適用パッチ件数・分類、または情報なしの理由）を付けたか。(b) **整合性チェック**: Update Manager が「利用可」なら `patchassessmentresources` を実際に照会し、`patchAssessment[]` の収集結果が `capabilityDetection` と矛盾しないか（利用可なのに空にしない）。矛盾は `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。(c) **切れ目ゲート G3（〈参照 J〉）**: `dueStep=5` の `collectionPlan[]` タスク（UpdateManager=利用可なら `UpdateManager:patchassessmentresources`）が**すべて証跡付きで terminal** か。`pending` が残れば手順 6 へ進まず実行する。(d) 適用・評価トリガー等の書き込みをしていないか（提示のみか）。
+- 🔍 **レビュー 5**: (a) 各判定に根拠（未適用パッチ件数・分類、または情報なしの理由）を付けたか。(b) **整合性チェック**: Update Manager が「利用可」なら `patchassessmentresources` を実際に照会し、`patchAssessment[]` の収集結果が `capabilityDetection` と矛盾しないか（利用可なのに空にしない）。矛盾は `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。(c) **切れ目ゲート G3（〈参照 J〉）**: `dueStep=5` の `collectionPlan[]` タスク（UpdateManager=利用可なら `UpdateManager:patchassessmentresources`）が**すべて証跡付きで terminal** か。`pending` が残れば手順 6 へ進まず実行する。**消化後に `progress.md` の手順 5・G3 を更新する。** (d) 適用・評価トリガー等の書き込みをしていないか（提示のみか）。
 
-### 手順 6. レポート生成・保存（コピー → 置換 → 検証ゲート）
+### 手順 6. レポート生成・保存（読み込み → 置換 → 検証ゲート）
 
 **テンプレートの未置換・行複製漏れ・CSV の列ズレ・文字化けを防ぐため、次の 3 ステップ（6-1〜6-3）を 1 ファイルずつ厳密に行う。検証ゲート（6-3）に全合格するまで確定・提示しない。** 出力仕様（ファイル・トークン・文字コード・フォルダ）は〈参照 F〉。
 
@@ -181,11 +190,12 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 
 **6-2. テンプレートを読み込み → プレースホルダ置換 → 書き出し（1 ファイルずつ）**:
 
-1. **テンプレートを `read_file` で全文読み込む**（`Copy-Item` 等のシェルコピーはしない＝未置換が残るため）。
+1. **テンプレートを `read_file` で全文読み込む**（`Copy-Item` 等のシェルコピーはしない＝未置換が残るため）。テンプレは**参照元**で保存先に複製せず、置換・行複製で**完成形にしてから** `create_file` で 1 回だけ書き出す（既存更新は `replace_string_in_file`。詳細は R2 の「ファイル生成の正しい機構」）。
 2. **スカラー `{{TOKEN}}` を `findings.json` の実値で置換**する。
 3. **`<!-- BEGIN X -->` 〜 `<!-- END X -->` 区域は、内部の 1 行を雛形として実データの全要素を 1 行ずつ複製**し、各行のトークンを置換する（例: `INVENTORY_ROWS` は `inventory[]` の**全件**、`CATEGORY_ROWS` は `summary.countByCategory` のカテゴリ数分）。0 件なら区域内を空にする。
    **件数が多くても省略・要約しない**。`inventory[]` が 57 件なら 57 行すべてを出力する。**「（その他 N リソース）」のような集約行を作らない**（省略は禁止。全件を掲載する）。
    **テンプレートの見出し・列・構造は改変しない**（独自の見出しや列で HTML を書き起こさない。`{{TOKEN}}` 置換と BEGIN/END 区域の行複製だけで作る）。
+   **`<style>` ブロック・`<header>` の `<span class="crumb">`・`<footer>` を含む全構造をそのまま保持し、削除・簡略化しない**（テンプレを一から書き直さない。ここを削ると検証(12)で不合格）。
 4. **テンプレート先頭のコメントブロック（`<!--` 〜 `-->`）を削除**する。
 5. **CSV**: ヘッダ行を保持し `{{*_ROWS}}` を全データ行に置換する。**カンマ・改行・二重引用符を含む値は必ず二重引用符で囲み、内部の `"` は `""` にエスケープ（RFC 4180）**（`notes` 等のカンマ未エスケープは列ズレの原因）。
 6. **`create_file` で書き出すのは未作成の HTML 4 ページ・CSV 4 種のみ**。`findings.json` は手順 3 で作成済みのため **再度 `create_file` せず、既存ファイルを編集で `summary` / `issue` まで確定**する（`findings-new.json` / `findings-updated.json` 等の別名・第2ファイルを作らない）。
@@ -199,19 +209,25 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - (7) **`inventory.csv` のデータ行数が `findings.json` の `inventory[]` 件数と一致**（全件出力・省略なし）。(8) **フォルダ内の findings は `findings.json` の 1 つだけ**（`findings-*.json` の別名が無い）。
 - (9) **`inventory[]` 件数が `summary.totalResources`（＝`az resource list` の権威件数）と一致**（件数の固定・〈参照 I〉）。(10) **整合性チェック**: `capabilityDetection` が「利用可」の経路について、対応配列が空なら `consistencyChecks[]` に「実際に 0 件」か「参照不可へ降格」の判定理由が記録され、矛盾（利用可なのに空＋未有効表記）が残っていない。
 - (11) **収集ゲート G4（最終・〈参照 J〉）**: `collectionPlan[]` に `pending` が **0 件**。全タスクが terminal（done / empty-verified / downgraded）で、各 terminal に**証跡**（実行クエリ・resultCount・収集時刻、または降格理由）が付いている。**`empty-verified` は該当サブ能力が `利用可` と確認できた場合のみ**（サブ能力 off は `downgraded`＝確認不可）。**`status==done` のタスクは対象配列が非空**（例: `Defender:softwareinventories=done` なのに `runtimeInventory[]` が空＝不合格）。**`利用可` のサブ能力のタスクが `pending`/欠落でない**。
+- (12) **テンプレ準拠（逐語複製）**: 各 HTML に `<footer>` と `class="crumb"` が存在し、`<style>` ブロックがテンプレートと同一（主要 CSS セレクタが欠落していない）。**テンプレを書き直して footer/crumb/style を削除・簡略化していない**（問題レポートの再発防止）。
+- (13) **issue 確定**: `inventory[]` の全要素の `issue` が `要対応` / `要判断` / `なし` のいずれか（**空文字が無い**）。inventory.html の課題列ピルも同値で表示。
+- (14) **進捗トラッキング（〈参照 K〉）**: `progress.md` が存在し、**全チェックボックス（手順 1〜7・ゲート G0〜G4・反スクリプト宣言・テンプレ準拠チェック）が `[x]`**（未チェック `[ ]` が 0 件）。先頭コメントは作成後に削除済み。
 
   ```powershell
   $d='usecases/002-config-inventory-vulnerability/reports/<YYYYMMDD-HHmmss>'
-  (Select-String -Path "$d/*" -Pattern '\{\{|<!-- BEGIN|<!-- END' -AllMatches | Measure-Object).Count  # 期待 0
+  (Select-String -Path "$d/*.html","$d/*.csv","$d/findings.json" -Pattern '\{\{|<!-- BEGIN|<!-- END' -AllMatches | Measure-Object).Count  # 期待 0（成果物のみ・progress.md は説明用にマーカーを含むため除外）
   foreach($f in 'inventory.csv','runtime-inventory.csv','vulnerabilities.csv','security-recommendations.csv'){ $b=[IO.File]::ReadAllBytes("$d/$f"); "$f=$($b[0]),$($b[1]),$($b[2])" }  # 期待 239,187,191
   $j=Get-Content "$d/findings.json" -Raw | ConvertFrom-Json  # 例外なし=有効 JSON
   Import-Csv "$d/inventory.csv" | %{ ($_.PSObject.Properties|Measure-Object).Count } | Sort-Object -Unique  # 1 値のみ＝列ズレなし
-  "inv csv=$((Import-Csv "$d/inventory.csv").Count) / findings inventory=$($j.inventory.Count) / totalResources=$($j.summary.totalResources)"  # 3 者一致が期待（権威件数・省略なし）
+  "inv csv=$((Import-Csv ($d + '/inventory.csv')).Count) / findings inventory=$($j.inventory.Count) / totalResources=$($j.summary.totalResources)"  # 3 者一致が期待（権威件数・省略なし）
   (Get-ChildItem "$d/findings*.json").Count  # 期待 1（別名なし）
   ($j.collectionPlan | Where-Object { $_.status -eq 'pending' } | Measure-Object).Count  # 期待 0（収集ゲート G4・pending 残存なし）
   # done ⟺ 対象配列が非空（相互チェック）。softwareinventories→runtimeInventory / assessments→(securityRecommendations+vulnerabilities) / patchassessmentresources→patchAssessment
   $map=@{ 'Defender:softwareinventories'=$j.runtimeInventory.Count; 'Defender:assessments'=($j.securityRecommendations.Count + $j.vulnerabilities.Count); 'UpdateManager:patchassessmentresources'=$j.patchAssessment.Count }
   $j.collectionPlan | ForEach-Object { if($_.status -eq 'done' -and $map.ContainsKey($_.task) -and $map[$_.task] -eq 0){ "NG: $($_.task) は done だが対象配列が空" } }  # 出力なしが期待
+  foreach($p in 'index.html','inventory.html','remediation.html','security-recommendations.html'){ $h=Get-Content -Raw "$d/$p"; "$p footer=$([bool]($h -match '<footer'))/crumb=$([bool]($h -match 'class=\"crumb\"'))" }  # 各 True/True 期待（(12)）
+  ($j.inventory | Where-Object { $_.issue -notin '要対応','要判断','なし' } | Measure-Object).Count  # 期待 0（(13) issue 全件確定）
+  "progress.md exists=$(Test-Path ($d + '/progress.md')) / 未チェック=$((Select-String -Path ($d + '/progress.md') -Pattern '\[ \]' -AllMatches | Measure-Object).Count)"  # exists=True / 未チェック=0 期待（(14)）
   $j.collectionPlan | Select-Object task,status,evidence | Format-Table -Auto  # 全タスク terminal＋証跡付きを目視
   ```
 
@@ -311,7 +327,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 ### 参照 F. レポート出力仕様（ファイル・トークン・文字コード・フォルダ）
 
 結果を **HTML（人が読むマルチページ）＋ CSV（機械可読データ）＋ `findings.json`（中間データ・単一のデータ源）** として出力する。
-**`report-template/` のテンプレートを複製してトークン置換で作る**（HTML/CSV を自作しない・外部スクリプトを実行しない）。生成手順は**手順 6**。トークン・区分値の詳細は [report-template/README.md](../../usecases/002-config-inventory-vulnerability/report-template/README.md)。
+**`report-template/` のテンプレートを `read_file` で読み、トークン置換して `create_file` で作る**（HTML/CSV を自作しない・外部スクリプトを実行しない）。生成手順は**手順 6**。トークン・区分値の詳細は [report-template/README.md](../../usecases/002-config-inventory-vulnerability/report-template/README.md)。
 
 - **テンプレート**: HTML `report-template/index.html` / `inventory.html` / `remediation.html` / `security-recommendations.html`、CSV `report-template/inventory.csv` / `runtime-inventory.csv` / `vulnerabilities.csv` / `security-recommendations.csv`、`report-template/findings.json`。
 - **ページ構成と並び順（重要）**: 概要（index）→ **棚卸インベントリ**（inventory）→ **是正が必要な項目**（remediation・重要度高・棚卸の直後）→ **セキュリティ構成推奨**（security-recommendations）。ランタイムは独立ページにせず棚卸インベントリに統合（〈参照 A〉）。
@@ -371,10 +387,10 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
 2. **網羅・全件表示・件数固定チェック**: 対象 RG 内の**全リソース**を `inventory[]` に列挙したか（版数詳細は★カテゴリ中心）。取得不可を明示したか。**`inventory[]` 件数が `summary.totalResources`（＝`az resource list` の権威件数）と一致し、実行セッション間でブレないか**（〈参照 I〉）。**`inventory[]` の全件が inventory.html に 1 行ずつ表示され、「その他 N リソース」のような集約行で省略していないか**（HTML の行数と `inventory[]` の件数が一致するか）。
 3. **根拠・分類チェック**: `vulnerabilities` の各是正要否に根拠（CVE ID / EOL 日付 / 参照 URL / 情報源）があるか。**構成系推奨を vulnerabilities に混入させていないか**（`securityRecommendations` 側）。URL は実在する公式ページか（推測・404 になりそうな URL を使っていないか）。
 4. **整合チェック**: `index.html` のサマリ件数が CSV / `findings.json` と一致するか。`findingType` / `remediationRequired` / `source` が定義どおりか。CSV のヘッダ・列順が定義どおりか。
-5. **テンプレート準拠・文字コードチェック**: 全 HTML/CSV/JSON が `report-template/*` の複製で、`{{TOKEN}}` / `<!-- BEGIN/END -->` / 先頭コメントが 0 件か（手順 6-3 の検証ゲートに合格したか）。**テンプレートの見出し・列・構造を改変していないか（独自 HTML を書き起こしていないか）。findings は `findings.json` の 1 ファイルのみで `findings-updated.json` 等の別名がないか**。HTML タブ相互リンクが機能し、CSV は各行の列数がヘッダと一致（カンマ含みは二重引用符囲み・列ズレなし）し **UTF-8 (BOM 付き)** か。`findings.json` が有効な JSON か。
+5. **テンプレート準拠・文字コードチェック**: 全 HTML/CSV/JSON が `report-template/*` を read_file→置換→create_file で生成したもので、`{{TOKEN}}` / `<!-- BEGIN/END -->` / 先頭コメントが 0 件か（手順 6-3 の検証ゲートに合格したか）。**テンプレートの見出し・列・構造を改変していないか（独自 HTML を書き起こしていないか）。`<footer>` / `<span class="crumb">` / `<style>` を削除・簡略化していないか（検証(12)）。findings は `findings.json` の 1 ファイルのみで `findings-updated.json` 等の別名がないか**。HTML タブ相互リンクが機能し、CSV は各行の列数がヘッダと一致（カンマ含みは二重引用符囲み・列ズレなし）し **UTF-8 (BOM 付き)** か。`findings.json` が有効な JSON か。
 6. **フォールバック整合・整合性チェック**: 収集能力の判別結果（Defender / Update Manager の有無）と、実際に用いた情報源・限界の記述が一致するか。無い結果を捧造していないか。**利用可なのに空になっていないか**: Defender=利用可なら `runtimeInventory` / `securityRecommendations`、Update Manager=利用可なら `patchAssessment` を実際に収集したか（利用可なのに空＋「MDVM 未有効」等の矛盾した理由を書いていないか）。**手順 3〜5 の実収集結果と `capabilityDetection` の食い違いが `consistencyChecks[]` に記録・解消されているか**（〈参照 I〉）。**収集タスク契約 `collectionPlan[]` に `pending` が残っていないか（全タスク terminal＋証跡付き・収集ゲート G4 に合格したか）**（〈参照 J〉）。`利用可` のタスクを証跡なしに `empty-verified` にしていないか（＝収集し損ねを 0 件と偽っていないか）。
 7. **機密チェック**: シークレット / パスワード / 接続文字列 / 個人のメール等を含めていないか（実値でも記載しない）。
-8. **保存チェック**: 保存先が `reports/<YYYYMMDD-HHmmss>/`（JST 命名）で、HTML 4 ページ・CSV 4 種・`findings.json` が揃い、既存フォルダを上書きしていないか。
+8. **保存チェック**: 保存先が `reports/<YYYYMMDD-HHmmss>/`（JST 命名）で、HTML 4 ページ・CSV 4 種・`findings.json` が揃い、既存フォルダを上書きしていないか。**`progress.md` が存在し、手順 1〜7・ゲート G0〜G4・テンプレ準拠チェックが全て完了マークか（検証(14)・〈参照 K〉）。**
 
 ### 参照 I. 権威リストと整合性チェック（件数の固定・capabilityDetection 照合）
 
@@ -450,6 +466,25 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
 - **G3（手順 5→6）**: `dueStep=5` のタスク（`updateManager=利用可` 時 `UpdateManager:patchassessmentresources`）が全て terminal＋証跡付きか。
 - **G4（手順 6-3・最終）**: `collectionPlan[]` に `pending` が 0 件で、全タスクが terminal＋証跡付きか。**加えて `status==done` のタスクは対象配列が非空、`利用可` のサブ能力のタスクが `pending`/欠落でない**ことを機械チェックする（手順 6-3 の検証(11)）。
 - **いずれのゲートも、`pending` が残っていれば次工程へ進まず、当該タスクの照会を実行してから再判定する**。この「切れ目ごとに pending を 0 にする」運用が収集し損ねを防ぐ本体。
+
+### 参照 K. 進捗トラッキング（progress.md）と反スクリプト・ハードストップ
+
+ワークフロー無視（手順スキップ・テンプレ改変・スクリプト生成）を**受動的な自己レビューだけに頼らず**、実行中の状態ファイルで可視化して防ぐ。
+
+**K-1. progress.md の作成と更新**
+
+- 手順 3 冒頭で `report-template/progress.md` を `read_file` で読み `reports/<YYYYMMDD-HHmmss>/progress.md` を作成する（`findings.json` と同じフォルダ・同じく 1 回だけの `create_file`）。
+- **各手順の切れ目（手順 1→2→3→4→5→6→7、ゲート G0〜G4）で `replace_string_in_file` により該当項目を更新**（`[ ]`→`[x]`。ゲートも完了で `[x]`、失敗は末尾の記録欄に記す）してから次工程へ進む。**作成後に先頭コメントを削除する**（検証(14)の誤検知防止）。
+- `progress.md` は「手順とゲートの消化状況・テンプレ準拠チェック・反スクリプト宣言」を軽量に追う一覧で、`findings.json` の `collectionPlan[]`（収集タスク契約）/ `consistencyChecks[]`（照合記録）とは役割が別（二重管理しない）。
+- `progress.md` は `reports/<YYYYMMDD-HHmmss>/` 配下のローカル成果物（`.gitignore` 済み・コミットしない）。R2 の許可出力に含む。
+
+**K-2. 反スクリプト・ハードストップ（R2 の運用）**
+
+- `findings.json` / HTML / CSV を**生成・整形するスクリプト**（`.ps1` / `.py` 等）を書こうとしていると気づいたら**その場で停止**し、`create_file`（新規 1 回）／`replace_string_in_file`（既存更新）による直接組み立てに切り替える。`progress.md` の反スクリプト宣言にチェックを入れて明示する。
+
+**K-3. 最終確認**
+
+- 手順 6-3 の検証(14)で `progress.md` の全項目完了（手順 1〜7・G0〜G4・テンプレ準拠チェックに `未`/`NG`/未チェック `[ ]` が残っていない）を確認する。手順 7（参照 H）でも点検する。
 
 ---
 
