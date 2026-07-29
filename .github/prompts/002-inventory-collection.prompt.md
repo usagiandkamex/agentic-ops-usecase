@@ -29,7 +29,7 @@ agent: 'azure-config-inventory-analyst'
 
 ### 手順 3. 棚卸収集（`findings.json` を作りながら）
 
-> 手順 3 冒頭で保存先 `reports/<YYYYMMDD-HHmmss>/` を決め、`report-template/findings.json` を `read_file` で読みトークン置換した作業用 `findings.json` を `create_file` で **1 つだけ**作成し、収集の進行に合わせて逐次書き込む（別名 `findings-new.json` を作らない）。同時に `report-template/progress.md` を `read_file` で読み、`create_file` で `progress.md` を作成し、**各手順の切れ目で更新・自己検査**してから次へ進む（〈参照 K〉）。テンプレは参照元で保存先に複製せず、**生成スクリプト（`.ps1`/`.py` 等）は作らず**既存更新は `replace_string_in_file` で行う（〈参照 K〉）。
+> 保存先 `reports/<YYYYMMDD-HHmmss>/` と `progress.md` は**エージェント起動直後（手順 1 前）に確定・作成済み**（〈参照 K〉）。手順 3 冒頭で `report-template/findings.json` を `read_file` で読みトークン置換した作業用 `findings.json` を `create_file` で **1 つだけ**作成し、収集の進行に合わせて逐次書き込む（別名 `findings-new.json` を作らない）。以降 `progress.md` を**各手順の切れ目で更新・自己検査**してから次へ進む（〈参照 K〉）。テンプレは参照元で保存先に複製せず、**生成スクリプト（`.ps1`/`.py` 等）は作らず**既存更新は `replace_string_in_file` で行う（〈参照 K〉）。
 
 1. **3-1 全列挙（`az resource list` を唯一の権威ソースに）**: `az resource list --subscription <SUBSCRIPTION_ID> --resource-group <RESOURCE_GROUP> -o json` を**唯一の権威ソース（single source of truth）**とし、その `id` 集合で棚卸対象を確定する。
    **件数の固定（実行セッション間でブレさせない）**: `inventory[]` の件数・`summary.totalResources` はこの権威件数と**必ず一致**させる。Resource Graph / Azure MCP は**版数などの詳細補完と 0 件裏取り専用**で件数を増減させない（正典は常に `az resource list`）。
