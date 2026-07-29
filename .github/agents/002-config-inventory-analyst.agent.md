@@ -229,7 +229,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - (12) **テンプレ準拠（逐語複製）**: 各 HTML に `<footer>` と `class="crumb"` が存在し、`<style>` ブロックがテンプレートと同一（主要 CSS セレクタが欠落していない）。**テンプレを書き直して footer/crumb/style を削除・簡略化していない**（問題レポートの再発防止）。
 - (13) **issue 確定**: `inventory[]` の全要素の `issue` が `要対応` / `要判断` / `なし` のいずれか（**空文字が無い**）。inventory.html の課題列ピルも同値で表示。
 - (14) **進捗トラッキング（〈参照 K〉）**: `progress.md` が存在し、**全チェックボックス（手順 1〜7・ゲート G0〜G4・反スクリプト宣言・テンプレ準拠チェック）が `[x]`**（未チェック `[ ]` が 0 件）。先頭コメントは作成後に削除済み。
-- (15) **セクション保持（`<h2>` 削除防止・SECTION アンカー）**: 各 HTML に自ページの必須 `<!-- SECTION: x -->` アンカーが**全て存在**する（欠落＝`<h2>` セクション削除＝不合格）。index=`summary`/`category`/`top-remediation`、inventory=`inventory-resources`/`inventory-runtime`、remediation=`remediation-findings`/`remediation-eol`/`remediation-patch`、security-recommendations=`security-recommendations`。
+- (15) **セクション保持（`<h2>` 削除防止・SECTION アンカー）**: 各 HTML に自ページの必須 `<!-- SECTION: x -->` アンカーが**全て存在**する（欠落＝`<h2>` セクション削除＝不合格）。index=`summary`/`category`/`top-remediation`、inventory=`inventory-resources`/`inventory-runtime`、remediation=`remediation-findings`/`remediation-eol`/`remediation-patch`/`remediation-secrec`（セキュリティ構成推奨セクションは `remediation.html` 内・専用 HTML は無い）。
 - (16) **列定義の固定（`<thead>` 一致・重要）**: 各 HTML の各テーブルの `<thead>` ヘッダ行がテンプレートと**一字一句一致**する（列ラベル・列数・列順を改変していない）。棚卸表に「位置」等の列を新設したり「ランタイム」「収集ソース」列を削除していない（問題レポートの再発防止）。
 - (17) **課題ピルのクラス**: inventory.html の課題ピルの class が `issue-yes` / `issue-check` / `issue-no` のいずれかだけ（`issue-要対応` / `issue-なし` 等のラベル直書きクラスが 0 件）。
 - (18) **一時ファイルなし**: レポートフォルダに `temp-*.*`（一時 JSON/TXT）や `findings-*.json`（別名）が 0 件で、成果物が HTML 3 / CSV 4 / `findings.json` / `progress.md` のみ。
@@ -243,8 +243,9 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   "inv csv=$((Import-Csv ($d + '/inventory.csv')).Count) / findings inventory=$($j.inventory.Count) / totalResources=$($j.summary.totalResources)"  # 3 者一致が期待（権威件数・省略なし）
   (Get-ChildItem "$d/findings*.json").Count  # 期待 1（別名なし）
   ($j.collectionPlan | Where-Object { $_.status -eq 'pending' } | Measure-Object).Count  # 期待 0（収集ゲート G4・pending 残存なし）
-  # done ⟺ 対象配列が非空（相互チェック）。softwareinventories→runtimeInventory / assessments→(securityRecommendations+vulnerabilities) / patchassessmentresources→patchAssessment / CVE:runtimeLookup・CVE:osLookup→vulnerabilities（常時タスク・〈参照 J-1〉）
-  $map=@{ 'Defender:softwareinventories'=$j.runtimeInventory.Count; 'Defender:assessments'=($j.securityRecommendations.Count + $j.vulnerabilities.Count); 'UpdateManager:patchassessmentresources'=$j.patchAssessment.Count; 'CVE:runtimeLookup'=$j.vulnerabilities.Count; 'CVE:osLookup'=$j.vulnerabilities.Count }
+  # done ⟺ 対象配列が非空（相互チェック）。softwareinventories→runtimeInventory / assessments→(securityRecommendations+vulnerabilities) / patchassessmentresources→patchAssessment / CVE:runtimeLookup・CVE:osLookup→公開ソース由来 CVE（findingType=CVE かつ source∈NVD/MITRE/GHSA/DistroSecurityTracker/MSRC・常時タスク・〈参照 J-1〉）
+  $pubCve=($j.vulnerabilities | Where-Object { $_.findingType -eq 'CVE' -and $_.source -in 'NVD','MITRE','GHSA','DistroSecurityTracker','MSRC' } | Measure-Object).Count  # 公開 CVE 横断の反映件数（EOL/PatchMissing・Defender 相関のみでは 0）
+  $map=@{ 'Defender:softwareinventories'=$j.runtimeInventory.Count; 'Defender:assessments'=($j.securityRecommendations.Count + $j.vulnerabilities.Count); 'UpdateManager:patchassessmentresources'=$j.patchAssessment.Count; 'CVE:runtimeLookup'=$pubCve; 'CVE:osLookup'=$pubCve }
   $j.collectionPlan | ForEach-Object { if($_.status -eq 'done' -and $map.ContainsKey($_.task) -and $map[$_.task] -eq 0){ "NG: $($_.task) は done だが対象配列が空" } }  # 出力なしが期待
   foreach($p in 'index.html','inventory.html','remediation.html'){ $h=Get-Content -Raw "$d/$p"; "$p footer=$([bool]($h -match '<footer'))/crumb=$([bool]($h -match 'class=\"crumb\"'))" }  # 各 True/True 期待（(12)）
   $req=@{'index.html'=@('summary','category','top-remediation');'inventory.html'=@('inventory-resources','inventory-runtime');'remediation.html'=@('remediation-findings','remediation-eol','remediation-patch','remediation-secrec')}; foreach($f in $req.Keys){ $c=Get-Content -Raw "$d/$f"; foreach($s in $req[$f]){ if($c -notmatch "SECTION: $s"){ "NG: $f にセクション $s が無い" } } }  # 出力なしが期待（(15)）
