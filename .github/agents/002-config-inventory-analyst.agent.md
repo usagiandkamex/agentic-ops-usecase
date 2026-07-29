@@ -13,14 +13,17 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 
 - **目的**: 対象 RG 内の全リソースを READ で棚卸 → 各リソースの OS / ランタイム / エンジン版数を一覧化 →
   公開脆弱性情報（Defender for Cloud の相関 CVE / EOL）と照合 → **是正要否**と**パッチ適用可否**を判定 → レポート化。
+  **主眼は Azure 上の Compute 系リソースが利用するランタイムの網羅的な棚卸**（VM/VMSS の OS・言語ランタイム、App Service / **Functions** / Container Apps のランタイム、AKS/コンテナのイメージ・K8s 版数、マネージド DB のエンジン版数を含む）。取得できないものは best-effort とし「取得不可（Reader / MDVM 未有効等）」と明示する。
 - **処理の流れ（手順 1 → 7）**:
   1. スコープ確認 → 2. 収集能力の判別 → **〈実行前の最終確認（承認）〉** → 3. 棚卸収集 →
   4. 脆弱性照合 → 5. パッチ適用可否判定 → 6. レポート生成（検証ゲート）→ 7. 最終レビュー。
 - **中核成果物 `findings.json`**: 単一のデータ源。**手順 3 で作り始め、手順 4〜6 で追記・確定**する。これを基に HTML 3 ページ（index / inventory / remediation）＋CSV 4 種を生成する。
+- **逐次追記と件数照合（まとめ書き禁止）**: `findings.json` は**照会（CLI / クエリ / Web GET）を 1 回実行するたびに対応配列（`inventory[]` / `runtimeInventory[]` / `vulnerabilities[]` / `patchAssessment[]` / `securityRecommendations[]`）へその場で追記**する（全部集めてから最後に一括で書かない）。各照会後に `collectionPlan[].evidence.resultCount` を更新し、**各手順の切れ目で「期待件数（evidence の resultCount 合計）＝実際の配列件数」を照合**して不一致（追記漏れ）をその場で補完する（〈参照 J〉）。
+- **大量リソースはバッチ処理（100 件単位）**: `az resource list` の権威件数が **100 件を超える場合、`resourceId` 集合を 100 件ずつのバッチに分割**し、バッチ単位で詳細照会 → `findings.json` へ逐次追記 → `progress.md` のバッチ進捗を更新する。**件数の正典は常に `az resource list` 全体**（バッチは処理の単位であり、件数を増減しない）。
 - **件数の正典は `az resource list`**: 棚卸対象と件数は **`az resource list` の出力を唯一の権威ソース**として固定する（実行セッションが変わっても件数がぶれないようにする）。以降の全工程はこの権威リストの `resourceId` をキーに情報を紐付ける。詳細は〈参照 I〉。
 - **整合性を蓄積情報で担保**: 手順 2 で判別した `capabilityDetection`（宣言）と、手順 3〜5 の実収集結果（成功/失敗/空）を各手順末尾で照合し、食い違いを `consistencyChecks[]` に記録して解消する（〈参照 I〉）。手順が進むごとに `findings.json` に蓄積した情報（権威リスト・capabilityDetection・inventory[]）を土台に、後工程はゼロから取り直さず**積み上げて**品質を保つ。
 - **収集し損ねを防ぐ「収集タスク契約＋切れ目ゲート」**: 手順 2 で `利用可` の経路から**必須収集タスクを `collectionPlan[]` に materialize**し、**各手順の切れ目（2→3→4→5→6）でそのタスクが証跡付きで消化されるまで先へ進めない**（〈参照 J〉）。これにより「Defender=利用可 なのに収集し忘れる」を pending の残存として検知・強制消化する。
-- **進捗トラッキング `progress.md` でワークフロー遵守を可視化**: **エージェント起動直後（手順 1 のスコープ確認より前）**に `report-template/progress.md` を `read_file` で読み `create_file` で作成し、各手順の切れ目で `replace_string_in_file` により更新・自己検査する（手順スキップ・テンプレ改変・スクリプト生成を防ぐ・〈参照 K〉）。**〈実行前の最終確認〉の承認取得は停止点ではない**——承認後は同一ターン内で手順 3 を開始し、progress.md を更新しながら最後まで継続する。
+- **進捗トラッキング `progress.md` でワークフロー遵守を可視化**: **エージェント起動直後（手順 1 のスコープ確認より前）**に `report-template/progress.md` を `read_file` で読み `create_file` で作成し、各手順の切れ目で `replace_string_in_file` により更新・自己検査する（手順スキップ・テンプレ改変・スクリプト生成を防ぐ・〈参照 K〉）。**各手順の終了時に、その手順のチェックリスト（件数照合を含む）を必ず埋め、予定どおり進んでいるかを確認してから次へ進む（最後にまとめて埋めない）**。**〈実行前の最終確認〉の承認取得は停止点ではない**——承認後は同一ターン内で手順 3 を開始し、progress.md を更新しながら最後まで継続する。
 - **確認は原則 1 回**（実行前の最終確認）。承認後は、エラー・ブロッカーが無い限り**停止せず最後まで自律実行**する。
 - **全工程 READ 専用**（書き込み・評価トリガーは一切しない）。
 
@@ -152,23 +155,30 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   ③ 別経路（`az graph query -q "resources | where resourceGroup =~ '<RESOURCE_GROUP>'"` と Azure MCP の group resource list）で再列挙し件数を突き合わせる。
   3 経路すべて 0 件かつ RG が存在する場合のみ「対象なし」と結論づけ、各経路の件数・接続スコープを根拠として明記する。食い違いは anomaly として記録し、フィルタ条件を見直して再取得する。
 
+- **バッチ分割（100 件超の高速化・重要）**: 権威件数が **100 件を超える場合、`resourceId` 集合を 100 件ずつのバッチに分割**して以降の詳細照会・登録を進める。各バッチで 3-2 の詳細照会→`inventory[]`/`runtimeInventory[]` への逐次追記を完了し、`progress.md` のバッチ進捗（`N/M バッチ完了`）を更新してから次バッチへ進む。`metadata` に `batchSize=100` と `batchCount` を記録する。**バッチは処理の単位であり、件数の正典は常に `az resource list` 全体**（バッチ分割で件数を増減しない）。100 件以下なら 1 バッチ扱い。
+
 **3-2. 全リソースの登録と版数ブレイクダウン**
 
 - 3-1 の権威リストを **すべて（漏れなく・重複なく）`inventory[]` に登録**する（1 リソース = 1 要素。`resourceId` で一意化。`category` の付与は〈参照 A〉）。
   **`inventory[]` の要素数が `az resource list` の件数と一致することを、登録直後にその場で確認する**（不一致なら登録漏れ/重複を修正）。
 - **`inventory[]` の行を増やさない（件数固定の要）**: 詳細照会で得た**子/プロキシリソース**（subnet・NSG ルール・`az resource list` に現れない内部コンポーネント等）を `inventory[]` の新規行として追加しない（＝件数からはドロップ）。版数などの詳細は**親リソースの行のフィールド**（`runtime` に OS/ランタイム/エンジン版数を集約）に格納するか、件数に含めない詳細表 `runtimeInventory[]` に退避する。これにより `inventory[]` の件数は常に `az resource list` と一致する（proxy の版数情報は失わない）。
 - そのうち **版数/パッチ管理の主対象カテゴリ（★ Compute / AppRuntime / Container / Data）** は、種別ごとの詳細照会（READ）で版数情報を取得する（詳細は〈参照 A〉）。
-- **リソース内部の利用ランタイム・ソフトウェア**（対象は **VM/VMSS と AKS/コンテナの内部のみ**）を READ で収集し `runtimeInventory[]` に格納する（取得源・範囲は〈参照 A〉）。
-  **手順 2 で `defenderSoftwareInventory`（MDVM）が「利用可」の場合は、`microsoft.security/softwareinventories` の照会を必ず実行**して `runtimeInventory[]` を埋める（省略しない）。`runtimeInventory[]` が空になるのは次のいずれかのみで、`capabilityDetection` と矛盾なく理由を記す:
-  ① `defenderSoftwareInventory=利用可` だが **RG 内に実際に該当ソフトが 0 件**（→「該当なし」・`empty-verified`）、② `defenderSoftwareInventory=未構成/参照不可`（→「確認不可（MDVM 未有効）」・`downgraded`）。
-  **`defenderForCloud`（assessments）が利用可でも MDVM は別能力**なので、**MDVM が未有効なら正直に「確認不可（MDVM 未有効）」と明示**する（MDVM が実際に有効なのに空のときだけ「MDVM 未有効」と書かない）。
+- **リソースの利用ランタイム・ソフトウェア**を READ で収集し `runtimeInventory[]` に格納する（列は 7 列のまま。取得源・範囲は〈参照 A〉）。**次の 4 系統をすべて同一表 `runtimeInventory[]` に統合する（VM だけにしない）**:
+  - (A) **VM/VMSS**（OS パッケージ・言語ランタイム・ミドルウェア。Defender softwareinventories。区分=`ospackage`/`language`/`middleware`）。
+  - (B) **DB をホストする VM の DB エンジン**（SQL Server on VM 等。`SqlVirtualMachines`/`SqlIaasExtension` と Defender softwareinventories 由来。区分=`dbengine`）。
+  - (C) **PaaS マネージド DB の DB エンジン版数**（`az sql db show` / `az postgres|mysql flexible-server show` の `version`。区分=`dbengine`）。
+  - (D) **App Service / Functions / Container Apps のランタイム**（siteConfig の linuxFxVersion 等。区分=`runtime`）、および AKS の kubernetes/ノードイメージ版数。
+  区分（`component`）で系統を識別し、**列は増やさない**。(C)(D) の版数は `inventory[]` の版数取得と同じ照会を流用し `runtimeInventory[]` にも 1 行足す。
+  **手順 2 で `defenderSoftwareInventory`（MDVM）が「利用可」の場合は、`microsoft.security/softwareinventories` の照会を必ず実行**して (A)(B) を埋める（省略しない）。`runtimeInventory[]` が空になるのは次のいずれかのみで、`capabilityDetection` と矛盾なく理由を記す:
+  ① MDVM=利用可・PaaS も対象なしで **実際に該当 0 件**（→「該当なし」・`empty-verified`）、② `defenderSoftwareInventory=未構成/参照不可` かつ (C)(D) の PaaS 版数も無い（→「確認不可（MDVM 未有効）」・`downgraded`）。
+  **`defenderForCloud`（assessments）が利用可でも MDVM は別能力**なので、**MDVM が未有効なら (A)(B) は「確認不可（MDVM 未有効）」と明示**する（ただし (C)(D) の PaaS ランタイム版数は MDVM 非依存で取得できるため、取得できたものは `runtimeInventory[]` に載せる）。
 
 **3-3. 並列化（取得情報が多いため推奨）**
 
 - 対象が複数のときは詳細照会を **並列**に実行して短縮する（すべて READ のため安全）。PowerShell 7 の `ForEach-Object -Parallel`（リソース ID 配列を並列で `az ... show`）、または独立した読み取りツール呼び出しを **1 ターンにまとめてバッチ並列**で実行する。
   端末コマンドは 1 度に 1 本（run_in_terminal を同時多重で呼ばない）。並列化はコマンド内部のジョブで行う。詳細は〈参照 E〉。
 
-- 🔍 **レビュー 3**: (a) `az resource list` を唯一の権威ソースにし、`inventory[]` 件数が `az resource list` 件数と一致するか（0 件時は接続スコープ＋3 経路で裏取り）。(b) 全列挙を漏れなく `inventory[]` に登録し、★カテゴリの版数を取得したか。(c) **整合性チェック**: `defenderSoftwareInventory`（MDVM）が「利用可」なら `softwareinventories` を実際に照会したか、実収集結果と `capabilityDetection` が矛盾しないか（MDVM 未有効は「確認不可」であって「該当なし」と混同しない）。矛盾は `consistencyChecks[]` に記録・解消したか。(d) **切れ目ゲート G1（〈参照 J〉）**: `dueStep=3` の `collectionPlan[]` タスク（`Inventory:azResourceList`、`defenderSoftwareInventory=利用可` なら `Defender:softwareinventories`）が**すべて証跡付きで terminal**（done/empty-verified/downgraded）か。`pending` が 1 件でも残れば手順 4 へ進まず、当該照会を実行する。**消化後に `progress.md` の手順 3・G1 を更新する（〈参照 K〉）。** (e) 取得不可を明示したか。(f) すべて READ か。
+- 🔍 **レビュー 3**: (a) `az resource list` を唯一の権威ソースにし、`inventory[]` 件数が `az resource list` 件数と一致するか（0 件時は接続スコープ＋3 経路で裏取り）。(b) 全列挙を漏れなく `inventory[]` に登録し、★カテゴリの版数を取得したか。(c) **整合性チェック**: `defenderSoftwareInventory`（MDVM）が「利用可」なら `softwareinventories` を実際に照会したか、実収集結果と `capabilityDetection` が矛盾しないか（MDVM 未有効は「確認不可」であって「該当なし」と混同しない）。矛盾は `consistencyChecks[]` に記録・解消したか。(d) **切れ目ゲート G1（〈参照 J〉）**: `dueStep=3` の `collectionPlan[]` タスク（`Inventory:azResourceList`、`defenderSoftwareInventory=利用可` なら `Defender:softwareinventories`）が**すべて証跡付きで terminal**（done/empty-verified/downgraded）か。`pending` が 1 件でも残れば手順 4 へ進まず、当該照会を実行する。**消化後に `progress.md` の手順 3・G1 を更新する（〈参照 K〉）。** (e) **件数照合＋バッチ完了**: 各照会の期待件数（evidence の resultCount 合計）と `inventory[]`/`runtimeInventory[]` の実件数が一致するか（不一致は追記漏れとして補完し `consistencyChecks[]` に記録）。100 件超は全バッチ（`N/M`）を完了したか。(f) 取得不可を明示したか。(g) すべて READ か。
 
 ### 手順 4. 脆弱性照合
 
@@ -176,13 +186,15 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - Defender の **構成系推奨**（CVE/パッチでないもの）は `securityRecommendations[]` に別途格納する（〈参照 C〉。vulnerabilities に混ぜない）。
   **手順 2 で Defender for Cloud が「利用可」の場合は、`microsoft.security/assessments` の照会を必ず実行**して構成系推奨を `securityRecommendations[]` に格納する（省略しない）。空になるのは実際に該当所見が無い場合のみで、`capabilityDetection` と矛盾しないこと。
 - EOL 照合は endoflife.date（主）/ Microsoft Lifecycle（補助）を **Web の GET** で参照する。推測の URL は使わない。
-- 🔍 **レビュー 4**: (a) 各是正要否に根拠（CVE ID / EOL 日付 / 参照 URL / 情報源）を付けたか。(b) 版数不明・情報不足を「要確認」にしたか。(c) **整合性チェック**: Defender が「利用可」なら `assessments` を実際に照会し、`vulnerabilities[]`/`securityRecommendations[]` の収集結果が `capabilityDetection` と矛盾しないか（利用可なのに空＋「未有効」の矛盾を書かない）。矛盾は `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。(d) **切れ目ゲート G2（〈参照 J〉）**: `dueStep=4` の `collectionPlan[]` タスク（Defender=利用可なら `Defender:assessments`）が**すべて証跡付きで terminal** か。`pending` が残れば手順 5 へ進まず実行する。**消化後に `progress.md` の手順 4・G2 を更新する。** (e) 書き込み・スキャン起動をしていないか。
+- **公開 CVE 横断照合（Defender に依存しない・重要）**: `runtimeInventory[]` の**全成分**を **製品×版数で重複排除**し、公開脆弱性ソースを **Web の GET** で照合して **Critical/High** の既知 CVE を `vulnerabilities[]`（findingType=CVE）に追加する（〈参照 E〉の重複排除・まとめ取得に従う）。ソースは **NVD（`services.nvd.nist.gov` の CVE API・主）**、**ディストリ/ベンダのセキュリティトラッカー（Ubuntu Security Notices / Red Hat CVE DB / MSRC 等・OS パッケージ/OS 版数向け）**、**MITRE CVE（`cve.org`）**、**GHSA（GitHub Advisory・言語ライブラリ向け）** を用いる。深刻度は情報源の **CVSS（Critical/High）をそのまま**採用し、`source` は該当ソース（`NVD`/`MITRE`/`GHSA`/`DistroSecurityTracker`/`MSRC`）を記す。**該当版数が影響を受ける CVE のみ**を載せ、推測 URL・未確認 CVE を作らない（取得不可は「取得不可」と明示）。
+- 🔍 **レビュー 4**: (a) 各是正要否に根拠（CVE ID / EOL 日付 / 参照 URL / 情報源）を付けたか。(b) 版数不明・情報不足を「要確認」にしたか。(c) **整合性チェック**: Defender が「利用可」なら `assessments` を実際に照会し、`vulnerabilities[]`/`securityRecommendations[]` の収集結果が `capabilityDetection` と矛盾しないか（利用可なのに空＋「未有効」の矛盾を書かない）。矛盾は `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。(d) **切れ目ゲート G2（〈参照 J〉）**: `dueStep=4` の `collectionPlan[]` タスク（Defender=利用可なら `Defender:assessments`、常時 `CVE:runtimeLookup`）が**すべて証跡付きで terminal** か。`pending` が残れば手順 5 へ進まず実行する。**消化後に `progress.md` の手順 4・G2 を更新する。** (e) **公開 CVE 照合**: `runtimeInventory[]` の全成分（製品×版数で重複排除）を NVD/ディストリ・ベンダ/MITRE/GHSA で照合し、Critical/High を `vulnerabilities[]` に追加したか（`CVE:runtimeLookup` タスクを消化したか）。(f) 書き込み・スキャン起動をしていないか。
 
 ### 手順 5. パッチ適用可否判定
 
 - 〈参照 D〉に従い、Update Manager の **既存の評価結果を READ 参照**し（有効時）、対象 VM ごとに適用可否・優先度・推奨を判定して `patchAssessment[]` に格納する。
   **手順 2 で Update Manager が「利用可」なら、`patchassessmentresources`（必要に応じて `patchinstallationresults`）の照会を必ず実行**して対象 VM を `patchAssessment[]` に格納する（省略しない）。`patchAssessment[]` が空になるのは **未構成/参照不可、または対象 VM が無い場合のみ**で、`capabilityDetection` と矛盾させない（利用可なのに空にしない）。未構成時は「情報なし」とし EOL/版数ベースの推奨に留める。
-- 🔍 **レビュー 5**: (a) 各判定に根拠（未適用パッチ件数・分類、または情報なしの理由）を付けたか。(b) **整合性チェック**: Update Manager が「利用可」なら `patchassessmentresources` を実際に照会し、`patchAssessment[]` の収集結果が `capabilityDetection` と矛盾しないか（利用可なのに空にしない）。矛盾は `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。(c) **切れ目ゲート G3（〈参照 J〉）**: `dueStep=5` の `collectionPlan[]` タスク（UpdateManager=利用可なら `UpdateManager:patchassessmentresources`）が**すべて証跡付きで terminal** か。`pending` が残れば手順 6 へ進まず実行する。**消化後に `progress.md` の手順 5・G3 を更新する。** (d) 適用・評価トリガー等の書き込みをしていないか（提示のみか）。
+- **現行 OS 版数の公開 CVE 横断（Update Manager だけに頼らない・重要）**: 各 VM の**現行 OS 版数**（`inventory[]` の runtime / instanceView の osName+osVersion）について、Update Manager の未適用パッチに加え、**公開ソース（ディストリ/ベンダのセキュリティトラッカー主・NVD/MSRC 補助）で現行版数に該当する Critical/High の CVE を横断チェック**し `vulnerabilities[]`（findingType=CVE）に追加する（〈参照 E〉で重複排除・まとめ取得。`source` はソース名）。Update Manager が未構成でも本チェックは行い、該当版数が影響を受ける CVE のみを載せる（推測・未確認 CVE を作らない）。
+- 🔍 **レビュー 5**: (a) 各判定に根拠（未適用パッチ件数・分類、または情報なしの理由）を付けたか。(b) **整合性チェック**: Update Manager が「利用可」なら `patchassessmentresources` を実際に照会し、`patchAssessment[]` の収集結果が `capabilityDetection` と矛盾しないか（利用可なのに空にしない）。矛盾は `consistencyChecks[]` に記録・解消したか（〈参照 I〉）。(c) **切れ目ゲート G3（〈参照 J〉）**: `dueStep=5` の `collectionPlan[]` タスク（UpdateManager=利用可なら `UpdateManager:patchassessmentresources`、常時 `CVE:osLookup`）が**すべて証跡付きで terminal** か。`pending` が残れば手順 6 へ進まず実行する。**消化後に `progress.md` の手順 5・G3 を更新する。** (d) **OS 版数の公開 CVE 横断**: 現行 OS 版数の Critical/High CVE をディストリ/ベンダ/NVD/MSRC で確認し `vulnerabilities[]` に追加したか（`CVE:osLookup` タスクを消化したか）。(e) 適用・評価トリガー等の書き込みをしていないか（提示のみか）。
 
 ### 手順 6. レポート生成・保存（読み込み → 置換 → 検証ゲート）
 
@@ -197,6 +209,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 3. **`<!-- BEGIN X -->` 〜 `<!-- END X -->` 区域は、内部の 1 行を雛形として実データの全要素を 1 行ずつ複製**し、各行のトークンを置換する（例: `INVENTORY_ROWS` は `inventory[]` の**全件**、`CATEGORY_ROWS` は `summary.countByCategory` のカテゴリ数分）。0 件の場合も `<tbody>` を空にせず、テンプレ先頭コメントに記載のフォールバック行（「該当なし」/「確認不可」）を 1 行だけ出力してセクションを残す。
    **件数が多くても省略・要約しない**。`inventory[]` が 57 件なら 57 行すべてを出力する。**「（その他 N リソース）」のような集約行を作らない**（省略は禁止。全件を掲載する）。
    **テンプレートの見出し・列・構造は改変しない**（独自の見出しや列で HTML を書き起こさない。`{{TOKEN}}` 置換と BEGIN/END 区域の行複製だけで作る）。
+   **各テーブルの `<thead>` のヘッダ行（列ラベル・列数・列順）はテンプレートと一字一句同一にする**。**列を追加・削除・改名しない**（例: 棚卸表に「位置」列を新設したり「ランタイム」「収集ソース」列を削除するのは重大違反。問題レポート 20260729-161513 の再発防止）。**課題ピルのクラスは `issue-yes`（要対応）/ `issue-check`（要判断）/ `issue-no`（なし）のいずれかだけ**を使う（`issue-要対応` や `issue-なし` のようにラベルをそのままクラス名にしない＝CSS が効かない不具合）。
    **テンプレートの `<h2>` セクション（見出し＋テーブル）を 1 つも削除しない**。**各セクション直前の `<!-- SECTION: x -->` アンカーを出力に残す**（削除・改名しない。検証(15)）。
    **`<style>` ブロック・`<header>` の `<span class="crumb">`・`<footer>` を含む全構造をそのまま保持し、削除・簡略化しない**（テンプレを一から書き直さない。ここを削ると検証(12)で不合格）。
 4. **テンプレート先頭のコメントブロック（`<!--` 〜 `-->`）を削除**する。
@@ -204,6 +217,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 6. **`create_file` で書き出すのは未作成の HTML 3 ページ・CSV 4 種のみ**。`findings.json` は手順 3 で作成済みのため **再度 `create_file` せず、既存ファイルを編集で `summary` / `issue` まで確定**する（`findings-new.json` / `findings-updated.json` 等の別名・第2ファイルを作らない）。
    **HTML / CSV / JSON はいずれも `create_file` と編集ツールで直接作り、Python / PowerShell 等の生成スクリプト（`.py` / `.ps1` 等）は書かない・実行しない**（R2）。
    書き出し後、**CSV 4 種は UTF-8 (BOM 付き) で再保存**（`$raw=Get-Content -Raw -Encoding utf8 $p; Set-Content -Path $p -Value $raw -Encoding utf8BOM -NoNewline`）。**この BOM 付与だけは端末の 1 行インラインコマンドで行う**（スクリプトファイルにしない）。HTML/JSON は BOM 不要。
+   **中間・一時ファイル（`temp-*.json` / `temp-*.txt` 等）をレポートフォルダに残さない**。Azure 照会の生 JSON を一時保存する必要があるときは**レポートフォルダ外（`$env:TEMP`）**に置き、**作業後に削除**する（レポートフォルダに残る成果物は HTML 3 / CSV 4 / `findings.json` / `progress.md` のみ）。
 
 **6-3. 機械的検証ゲート（必須・全合格するまで確定/提示しない）**: 保存フォルダに対し、端末の READ コマンドで検証する。
 
@@ -215,7 +229,10 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - (12) **テンプレ準拠（逐語複製）**: 各 HTML に `<footer>` と `class="crumb"` が存在し、`<style>` ブロックがテンプレートと同一（主要 CSS セレクタが欠落していない）。**テンプレを書き直して footer/crumb/style を削除・簡略化していない**（問題レポートの再発防止）。
 - (13) **issue 確定**: `inventory[]` の全要素の `issue` が `要対応` / `要判断` / `なし` のいずれか（**空文字が無い**）。inventory.html の課題列ピルも同値で表示。
 - (14) **進捗トラッキング（〈参照 K〉）**: `progress.md` が存在し、**全チェックボックス（手順 1〜7・ゲート G0〜G4・反スクリプト宣言・テンプレ準拠チェック）が `[x]`**（未チェック `[ ]` が 0 件）。先頭コメントは作成後に削除済み。
-- (15) **セクション保持（`<h2>` 削除防止・SECTION アンカー）**: 各 HTML に自ページの必須 `<!-- SECTION: x -->` アンカーが**全て存在**する（欠落＝`<h2>` セクション削除＝不合格）。index=`summary`/`category`/`top-remediation`、inventory=`inventory-resources`/`inventory-runtime`、remediation=`remediation-findings`/`remediation-eol`/`remediation-patch`、security-recommendations=`security-recommendations`。
+- (15) **セクション保持（`<h2>` 削除防止・SECTION アンカー）**: 各 HTML に自ページの必須 `<!-- SECTION: x -->` アンカーが**全て存在**する（欠落＝`<h2>` セクション削除＝不合格）。index=`summary`/`category`/`top-remediation`、inventory=`inventory-resources`/`inventory-runtime`、remediation=`remediation-findings`/`remediation-eol`/`remediation-patch`/`remediation-secrec`（セキュリティ構成推奨セクションは `remediation.html` 内・専用 HTML は無い）。
+- (16) **列定義の固定（`<thead>` 一致・重要）**: 各 HTML の各テーブルの `<thead>` ヘッダ行がテンプレートと**一字一句一致**する（列ラベル・列数・列順を改変していない）。棚卸表に「位置」等の列を新設したり「ランタイム」「収集ソース」列を削除していない（問題レポートの再発防止）。
+- (17) **課題ピルのクラス**: inventory.html の課題ピルの class が `issue-yes` / `issue-check` / `issue-no` のいずれかだけ（`issue-要対応` / `issue-なし` 等のラベル直書きクラスが 0 件）。
+- (18) **一時ファイルなし**: レポートフォルダに `temp-*.*`（一時 JSON/TXT）や `findings-*.json`（別名）が 0 件で、成果物が HTML 3 / CSV 4 / `findings.json` / `progress.md` のみ。
 
   ```powershell
   $d='usecases/002-config-inventory-vulnerability/reports/<YYYYMMDD-HHmmss>'
@@ -226,12 +243,17 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   "inv csv=$((Import-Csv ($d + '/inventory.csv')).Count) / findings inventory=$($j.inventory.Count) / totalResources=$($j.summary.totalResources)"  # 3 者一致が期待（権威件数・省略なし）
   (Get-ChildItem "$d/findings*.json").Count  # 期待 1（別名なし）
   ($j.collectionPlan | Where-Object { $_.status -eq 'pending' } | Measure-Object).Count  # 期待 0（収集ゲート G4・pending 残存なし）
-  # done ⟺ 対象配列が非空（相互チェック）。softwareinventories→runtimeInventory / assessments→(securityRecommendations+vulnerabilities) / patchassessmentresources→patchAssessment
-  $map=@{ 'Defender:softwareinventories'=$j.runtimeInventory.Count; 'Defender:assessments'=($j.securityRecommendations.Count + $j.vulnerabilities.Count); 'UpdateManager:patchassessmentresources'=$j.patchAssessment.Count }
+  # done ⟺ 対象配列が非空（相互チェック）。softwareinventories→runtimeInventory / assessments→(securityRecommendations+vulnerabilities) / patchassessmentresources→patchAssessment / CVE:runtimeLookup・CVE:osLookup→公開ソース由来 CVE（findingType=CVE かつ source∈NVD/MITRE/GHSA/DistroSecurityTracker/MSRC・常時タスク・〈参照 J-1〉）
+  $pubCve=($j.vulnerabilities | Where-Object { $_.findingType -eq 'CVE' -and $_.source -in 'NVD','MITRE','GHSA','DistroSecurityTracker','MSRC' } | Measure-Object).Count  # 公開 CVE 横断の反映件数（EOL/PatchMissing・Defender 相関のみでは 0）
+  $map=@{ 'Defender:softwareinventories'=$j.runtimeInventory.Count; 'Defender:assessments'=($j.securityRecommendations.Count + $j.vulnerabilities.Count); 'UpdateManager:patchassessmentresources'=$j.patchAssessment.Count; 'CVE:runtimeLookup'=$pubCve; 'CVE:osLookup'=$pubCve }
   $j.collectionPlan | ForEach-Object { if($_.status -eq 'done' -and $map.ContainsKey($_.task) -and $map[$_.task] -eq 0){ "NG: $($_.task) は done だが対象配列が空" } }  # 出力なしが期待
   foreach($p in 'index.html','inventory.html','remediation.html'){ $h=Get-Content -Raw "$d/$p"; "$p footer=$([bool]($h -match '<footer'))/crumb=$([bool]($h -match 'class=\"crumb\"'))" }  # 各 True/True 期待（(12)）
   $req=@{'index.html'=@('summary','category','top-remediation');'inventory.html'=@('inventory-resources','inventory-runtime');'remediation.html'=@('remediation-findings','remediation-eol','remediation-patch','remediation-secrec')}; foreach($f in $req.Keys){ $c=Get-Content -Raw "$d/$f"; foreach($s in $req[$f]){ if($c -notmatch "SECTION: $s"){ "NG: $f にセクション $s が無い" } } }  # 出力なしが期待（(15)）
   ($j.inventory | Where-Object { $_.issue -notin '要対応','要判断','なし' } | Measure-Object).Count  # 期待 0（(13) issue 全件確定）
+  # (16) <thead> 列定義の固定: テンプレの thead 行と生成物が一致（不一致は出力）
+  $tpl='usecases/002-config-inventory-vulnerability/report-template'; foreach($f in 'index.html','inventory.html','remediation.html'){ $a=([regex]::Matches((Get-Content -Raw "$tpl/$f"),'<thead><tr>.*?</tr></thead>').Value) -join ''; $b=([regex]::Matches((Get-Content -Raw "$d/$f"),'<thead><tr>.*?</tr></thead>').Value) -join ''; if($a -ne $b){ "NG: $f の <thead> がテンプレと不一致" } }  # 出力なしが期待（(16)）
+  (Select-String -Path "$d/inventory.html" -Pattern 'issue-(?!(?:yes|check|no)\b)' -AllMatches | Measure-Object).Count  # 期待 0（(17) 不正な issue クラスなし・単語境界で issue-nope/issue-yesterday 等も検出）
+  (Get-ChildItem "$d/temp-*","$d/findings-*.json" -ErrorAction SilentlyContinue | Measure-Object).Count  # 期待 0（(18) 一時/別名ファイルなし）
   "progress.md exists=$(Test-Path ($d + '/progress.md')) / 未チェック=$((Select-String -Path ($d + '/progress.md') -Pattern '\[ \]' -AllMatches | Measure-Object).Count)"  # exists=True / 未チェック=0 期待（(14)）
   $j.collectionPlan | Select-Object task,status,evidence | Format-Table -Auto  # 全タスク terminal＋証跡付きを目視
   ```
@@ -277,13 +299,15 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 
 > **行を増やさない（件数固定の要・〈参照 I〉）**: 上記の詳細照会は各リソースの**既存の `inventory[]` 行を補完**するためのもの。子/プロキシリソースや内部コンポーネントを新規行として `inventory[]` に足さない（版数は行フィールド or `runtimeInventory[]` へ）。件数は常に `az resource list` と一致させる。
 
-**内部ランタイム・ソフトウェアの棚卸（対象は VM/VMSS と AKS/コンテナの内部のみ）**:
+**ランタイムの棚卸（VM/VMSS ＋ DB ホスト VM の DB エンジン ＋ PaaS マネージド DB ＋ App Service/AKS ランタイムを同一表に統合）**:
 
-- **Defender ソフトウェアインベントリ**: `az graph query -q "securityresources | where type =~ 'microsoft.security/softwareinventories' | where id contains '<RESOURCE_GROUP>'"`
-  → VM 内の DB エンジン・言語ランタイム・ミドルウェアの名称・版数・ベンダ（例: postgresql-16 16.14、python3.10）を抽出（MDVM 有効時）。結果は `runtimeInventory[]` に格納。
-- 補助: Update Manager のパッケージ版数（`patchassessmentresources`）、VM 拡張機能、App Service の siteConfig、AKS の kubernetes/ノードイメージ版数（いずれも READ）。
-- MDVM 未有効等で取得不可なら「取得不可（Reader / MDVM 未有効）」と明示し、把握できる範囲を一覧化する。
-- レポートでは内部ランタイムを独立ページにせず **棚卸インベントリのページ内に統合**する（PaaS ランタイムも同じ表に整理。〈参照 F〉）。
+- **Defender ソフトウェアインベントリ（VM・DB ホスト VM）**: `az graph query -q "securityresources | where type =~ 'microsoft.security/softwareinventories' | where id contains '<RESOURCE_GROUP>'"`
+  → VM 内の DB エンジン（SQL Server on VM 等）・言語ランタイム・ミドルウェアの名称・版数・ベンダ（例: postgresql-16 16.14、python3.10）を抽出（MDVM 有効時）。結果は `runtimeInventory[]` に格納（区分=`dbengine`/`language`/`middleware`/`ospackage`）。
+- **PaaS マネージド DB の DB エンジン版数（MDVM 非依存）**: `az sql db show` / `az postgres flexible-server show` / `az mysql flexible-server show` の `version` を `runtimeInventory[]` にも 1 行足す（区分=`dbengine`）。
+- **App Service/Functions/Container Apps ランタイム（MDVM 非依存）**: siteConfig の linuxFxVersion 等を `runtimeInventory[]` に足す（区分=`runtime`）。
+- 補助: Update Manager のパッケージ版数（`patchassessmentresources`）、VM 拡張機能、AKS の kubernetes/ノードイメージ版数（いずれも READ）。
+- MDVM 未有効等で VM のソフトウェア情報が取得不可なら「取得不可（Reader / MDVM 未有効）」と明示し、把握できる範囲（PaaS DB/App Service 版数は MDVM 非依存で取得可）を一覧化する。
+- レポートではランタイムを独立ページにせず **棚卸インベントリのページ内に統合**する（VM・DB ホスト VM の DB ソフト・PaaS DB・App Service ランタイムを同じ表に整理。〈参照 F〉）。
 
 ### 参照 B. 是正要否の判定基準（決定論・厳守）と `issue` の確定
 
@@ -291,6 +315,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 
 - **`要`** = 次のいずれかを取得済みデータで確認できた場合のみ:
   - (a) Defender `microsoft.security/assessments` が対象リソースで **status=Unhealthy** かつ CVE 相関あり、または深刻度 **High/Critical**、
+  - (a2) **公開 CVE ソース（NVD / ディストリ・ベンダのセキュリティトラッカー / MITRE / GHSA）で Critical/High の CVE が現行版数（ランタイム / OS）に該当**、
   - (b) **EOL 到達**（権威ソースの EOL 日付 ≤ 分析日）、
   - (c) Update Manager が **未適用の Critical または Security パッチを 1 件以上**報告。
 - **`要確認`** = 版数不明・情報源が参照不可（Reader/MDVM/Update Manager 未構成）・**EOL 間近（分析日から 1 年以内 = 365 日以内に EOL。endoflife.date の `eol` 日付と「分析日 + 365 日」を比較して判定）**など、要/不要を確定できない場合。EOL 日付が日付でなく真偽値・不明の場合も `要確認`。
@@ -305,7 +330,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 
 `microsoft.security/assessments` の所見を次のとおり振り分ける。
 
-- **`vulnerabilities[]`**（findingType=`CVE` / `EOL` / `PatchMissing`）= CVE/脆弱性・OS のシステム更新（パッチ）。remediation ページに掲載。
+- **`vulnerabilities[]`**（findingType=`CVE` / `EOL` / `PatchMissing`）= CVE/脆弱性・OS のシステム更新（パッチ）。remediation ページに掲載。**Defender 相関 CVE に加え、公開ソース（NVD / ディストリ・ベンダ / MITRE / GHSA）で確認した Critical/High の CVE も `findingType=CVE` として含める**（`source` にソース名を記す）。
 - **`securityRecommendations[]`** = 構成系の推奨（マネージド ID 未使用・診断ログ未設定・publicNetworkAccess・TLS 等）。remediation ページ下部のセキュリティ構成推奨セクション（SECREC_ROWS）と security-recommendations.csv に掲載。
 - **構成系の指摘を findingType=CVE と誤ラベルしない**（CVE は実際の既知脆弱性に限る）。`securityRecommendations` には resource/severity/category/title/recommendation/referenceUrl/assessmentId を含める。
 - ここの `category` は **Defender の推奨分類（セキュリティコントロールの群：Identity / Data / Network / Compute 等）**であり、**棚卸の 8 分類（参照 A）とは別物**（取得できなければ「取得不可（Reader の範囲外）」等で明示）。
@@ -313,6 +338,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 ### 参照 D. パッチ適用可否の判定
 
 1. **Update Manager の評価結果（利用可時は必須）**: Azure Resource Graph の `patchassessmentresources` / `patchinstallationresults` を **READ 参照**し、対象 VM の **未適用パッチ**の有無・件数・分類（Critical / Security 等）を把握する。**手順 2 で Update Manager が「利用可」ならこの照会を必ず実行し、`patchAssessment[]` を埋める（省略しない）**。**新規評価はトリガーしない**。
+1b. **現行 OS 版数の公開 CVE 横断（Update Manager 非依存・必須）**: 現行 OS 版数について、公開ソース（ディストリ/ベンダのセキュリティトラッカー主・NVD/MSRC 補助）で Critical/High の CVE を横断チェックし `vulnerabilities[]`（findingType=CVE）に追加する（Update Manager が未構成でも実施。該当版数が影響を受ける CVE のみ・推測 CVE を作らない）。
 2. **判定**: 「適用推奨（未適用の Critical/Security あり）」/「適用検討（その他更新あり）」/「情報なし（評価未構成・結果なし）」を、根拠件数とともに示す。
 3. **適用は実行しない**。適用可否・優先度・推奨手順の**提示に留め**、実施判断はユーザーに委ねる。
 4. **フォールバック**: Update Manager / Defender が未構成・参照不可なら、Resource Graph メタデータ＋EOL 照合中心に切り替え、使える範囲でレポートする（無い結果を捏造しない）。
@@ -328,6 +354,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 4. **Defender assessments 等はサーバ側で条件フィルタ**（例: `where properties.status.code =~ 'Unhealthy'`、対象 RG・種別で絞る）。`--skip-token` の往復を最小化。
 5. **収集と生成を分離**。まず `findings.json` を完成 → その後 HTML/CSV を生成。CSV の BOM 変換は **全 CSV を 1 つのインラインコマンド（端末で 1 回）で一括処理**（スクリプトファイルは作らない）。
 6. **EOL の Web 取得は必要な URL を先に列挙して 1 回でまとめて**取得（同一 product を重複取得しない）。
+7. **公開 CVE の Web 取得も重複排除・まとめ取得**。`runtimeInventory[]` / OS 版数を **製品×版数で一意化**してから NVD/ディストリ・ベンダ/MITRE/GHSA に問い合わせ、同一製品×版数を重複取得しない。大量成分は 100 件バッチ（手順 3-1）と整合させ、取得時点を `metadata` に記録する（API 限界・レート時は取得可能分のみ載せ、取得不可を明示）。
 
 ### 参照 F. レポート出力仕様（ファイル・トークン・文字コード・フォルダ）
 
@@ -347,7 +374,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   - `vulnerabilities.csv`（CVE/EOL/PatchMissing のみ）: `resourceName, resourceType, component, currentVersion, findingType, identifier, severity, remediationRequired, recommendation, referenceUrl, source`。
   - `security-recommendations.csv`: `resourceName, resourceType, category, severity, title, recommendation, referenceUrl, source, assessmentId`（この `category` は Defender の推奨分類・〈参照 C〉）。
   - `findings.json`: `metadata` / `capabilityDetection`（`resourceGraph`/`defenderForCloud`/`defenderSoftwareInventory`/`updateManager`）/ `collectionPlan[]` / `consistencyChecks[]` / `inventory[]` / `runtimeInventory[]` / `vulnerabilities[]` / `patchAssessment[]` / `securityRecommendations[]` / `summary`（totalResources / countByCategory / remediationRequired / severity / eolCount / patchRecommended / securityRecommendationCount）。`summary.totalResources` は **`az resource list` の権威件数**（〈参照 I〉）。`collectionPlan[]` は capability から導出した**必須収集タスクの契約**（task/requiredBy/dueStep/status/evidence・〈参照 J〉）、`consistencyChecks[]` は capabilityDetection と実収集結果の照合記録。いずれも HTML/CSV には出力しない中間データ。
-- **区分値（固定）**: `findingType`=`CVE`/`EOL`/`PatchMissing`、`remediationRequired`=`要`/`要確認`/`不要`、`source`=`Defender`/`UpdateManager`/`endoflife.date`/`MicrosoftLifecycle`、収集能力=`利用可`/`未構成`/`参照不可`。取得できない項目は「取得不可（Reader の範囲外）」と明示。
+- **区分値（固定）**: `findingType`=`CVE`/`EOL`/`PatchMissing`、`remediationRequired`=`要`/`要確認`/`不要`、`source`=`Defender`/`UpdateManager`/`endoflife.date`/`MicrosoftLifecycle`/`NVD`/`MITRE`/`GHSA`/`DistroSecurityTracker`/`MSRC`、収集能力=`利用可`/`未構成`/`参照不可`。取得できない項目は「取得不可（Reader の範囲外）」と明示。
 - **文字コード（Windows 前提）**: CSV 4 種は **UTF-8 (BOM 付き)**（`create_file` 後に `Set-Content -Encoding utf8BOM` で再保存。先頭 3 バイト=239,187,191。Windows/Excel の文字化け防止）。**HTML / `findings.json` は UTF-8（BOM 不要）**。
 - バージョン・EOL・パッチ状況は取得時点の情報であり「概算 / 目安」と添える。
 
@@ -392,8 +419,8 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
 2. **網羅・全件表示・件数固定チェック**: 対象 RG 内の**全リソース**を `inventory[]` に列挙したか（版数詳細は★カテゴリ中心）。取得不可を明示したか。**`inventory[]` 件数が `summary.totalResources`（＝`az resource list` の権威件数）と一致し、実行セッション間でブレないか**（〈参照 I〉）。**`inventory[]` の全件が inventory.html に 1 行ずつ表示され、「その他 N リソース」のような集約行で省略していないか**（HTML の行数と `inventory[]` の件数が一致するか）。
 3. **根拠・分類チェック**: `vulnerabilities` の各是正要否に根拠（CVE ID / EOL 日付 / 参照 URL / 情報源）があるか。**構成系推奨を vulnerabilities に混入させていないか**（`securityRecommendations` 側）。URL は実在する公式ページか（推測・404 になりそうな URL を使っていないか）。
 4. **整合チェック**: `index.html` のサマリ件数が CSV / `findings.json` と一致するか。`findingType` / `remediationRequired` / `source` が定義どおりか。CSV のヘッダ・列順が定義どおりか。
-5. **テンプレート準拠・文字コードチェック**: 全 HTML/CSV/JSON が `report-template/*` を read_file→置換→create_file で生成したもので、`{{TOKEN}}` / `<!-- BEGIN/END -->` / 先頭コメントが 0 件か（手順 6-3 の検証ゲートに合格したか）。**テンプレートの見出し・列・構造を改変していないか（独自 HTML を書き起こしていないか）。`<footer>` / `<span class="crumb">` / `<style>` を削除・簡略化していないか（検証(12)）。各 HTML の `<h2>` セクションが全て残り、必須 `<!-- SECTION: x -->` アンカーが欠落していないか（検証(15)・「ランタイム / ソフトウェア明細」等のセクション消失防止）。findings は `findings.json` の 1 ファイルのみで `findings-updated.json` 等の別名がないか**。HTML タブ相互リンクが機能し、CSV は各行の列数がヘッダと一致（カンマ含みは二重引用符囲み・列ズレなし）し **UTF-8 (BOM 付き)** か。`findings.json` が有効な JSON か。
-6. **フォールバック整合・整合性チェック**: 収集能力の判別結果（Defender / Update Manager の有無）と、実際に用いた情報源・限界の記述が一致するか。無い結果を捧造していないか。**利用可なのに空になっていないか**: Defender=利用可なら `runtimeInventory` / `securityRecommendations`、Update Manager=利用可なら `patchAssessment` を実際に収集したか（利用可なのに空＋「MDVM 未有効」等の矛盾した理由を書いていないか）。**手順 3〜5 の実収集結果と `capabilityDetection` の食い違いが `consistencyChecks[]` に記録・解消されているか**（〈参照 I〉）。**収集タスク契約 `collectionPlan[]` に `pending` が残っていないか（全タスク terminal＋証跡付き・収集ゲート G4 に合格したか）**（〈参照 J〉）。`利用可` のタスクを証跡なしに `empty-verified` にしていないか（＝収集し損ねを 0 件と偽っていないか）。
+5. **テンプレート準拠・文字コードチェック**: 全 HTML/CSV/JSON が `report-template/*` を read_file→置換→create_file で生成したもので、`{{TOKEN}}` / `<!-- BEGIN/END -->` / 先頭コメントが 0 件か（手順 6-3 の検証ゲートに合格したか）。**テンプレートの見出し・列・構造を改変していないか（独自 HTML を書き起こしていないか）。`<footer>` / `<span class="crumb">` / `<style>` を削除・簡略化していないか（検証(12)）。各 HTML の `<h2>` セクションが全て残り、必須 `<!-- SECTION: x -->` アンカーが欠落していないか（検証(15)・「ランタイム / ソフトウェア明細」等のセクション消失防止）。**各テーブルの `<thead>` 列がテンプレートと一致し、列の新設・削除・改名がないか（検証(16)・「位置」列新設等）。課題ピルのクラスが `issue-yes`/`issue-check`/`issue-no` のみか（検証(17)）。レポートフォルダに `temp-*.*` や別名 findings が残っていないか（検証(18)）。** findings は `findings.json` の 1 ファイルのみで `findings-updated.json` 等の別名がないか**。HTML タブ相互リンクが機能し、CSV は各行の列数がヘッダと一致（カンマ含みは二重引用符囲み・列ズレなし）し **UTF-8 (BOM 付き)** か。`findings.json` が有効な JSON か。
+6. **フォールバック整合・整合性チェック**: 収集能力の判別結果（Defender / Update Manager の有無）と、実際に用いた情報源・限界の記述が一致するか。無い結果を捧造していないか。**利用可なのに空になっていないか**: Defender=利用可なら `runtimeInventory` / `securityRecommendations`、Update Manager=利用可なら `patchAssessment` を実際に収集したか（利用可なのに空＋「MDVM 未有効」等の矛盾した理由を書いていないか）。**手順 3〜5 の実収集結果と `capabilityDetection` の食い違いが `consistencyChecks[]` に記録・解消されているか**（〈参照 I〉）。**収集タスク契約 `collectionPlan[]` に `pending` が残っていないか（全タスク terminal＋証跡付き・収集ゲート G4 に合格したか）**（〈参照 J〉）。`利用可` のタスクを証跡なしに `empty-verified` にしていないか（＝収集し損ねを 0 件と偽っていないか）。**公開 CVE 照合（`CVE:runtimeLookup` / `CVE:osLookup`）を実行し、`runtimeInventory[]` 全成分・現行 OS 版数の Critical/High CVE を `vulnerabilities[]` に反映したか（件数照合が合致するか）。**
 7. **機密チェック**: シークレット / パスワード / 接続文字列 / 個人のメール等を含めていないか（実値でも記載しない）。
 8. **保存チェック**: 保存先が `reports/<YYYYMMDD-HHmmss>/`（JST 命名）で、HTML 3 ページ・CSV 4 種・`findings.json` が揃い、既存フォルダを上書きしていないか。**`progress.md` が存在し、手順 1〜7・ゲート G0〜G4・テンプレ準拠チェックが全て完了マークか（検証(14)・〈参照 K〉）。**
 
@@ -446,6 +473,8 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
   | サブ能力の状態 | タスク（`task`） | `dueStep` | 初期 `status` | 対象配列 |
   | --- | --- | --- | --- | --- |
   | 常に | `Inventory:azResourceList` | 3 | `pending` | `inventory[]` |
+  | 常に | `CVE:runtimeLookup` | 4 | `pending` | `vulnerabilities[]` |
+  | 常に | `CVE:osLookup` | 5 | `pending` | `vulnerabilities[]` |
   | `defenderSoftwareInventory=利用可` | `Defender:softwareinventories` | 3 | `pending` | `runtimeInventory[]` |
   | `defenderSoftwareInventory=未構成/参照不可` | `Defender:softwareinventories` | 3 | `downgraded`（確認不可（MDVM 未有効）） | `runtimeInventory[]` |
   | `defenderForCloud=利用可` | `Defender:assessments` | 4 | `pending` | `securityRecommendations[]` / `vulnerabilities[]` |
@@ -454,6 +483,7 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
   | `updateManager=未構成/参照不可` | `UpdateManager:patchassessmentresources` | 5 | `downgraded`（確認不可（Update Manager 未構成）） | `patchAssessment[]` |
 
 - `collectionPlan[]` の要素: `task` / `requiredBy`（例 `defenderSoftwareInventory=利用可`）/ `dueStep`（3/4/5）/ `status`（`pending`→terminal）/ `evidence`（実行クエリ・resultCount・収集時刻、または降格理由）。
+- **CVE ルックアップは常時タスク（Web GET は常時利用可）**: `CVE:runtimeLookup` / `CVE:osLookup` は常に `pending` で登録し、照会後に該当ありなら `done`（`vulnerabilities[]` 非空）、該当 CVE 無しなら `empty-verified`、API 限界/レートで照会不能なら `downgraded`（理由付き）にする。off にはならない（Web は常時利用可）。
 
 **J-2. 終端ステータス（terminal）と証跡（evidence）の必須化**
 
@@ -467,8 +497,8 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
 
 - **G0（手順 2→3）**: 全サブ能力のタスクが `collectionPlan[]` に登録済みか（`利用可`→`pending`、off→`downgraded`。materialize 漏れなし）。
 - **G1（手順 3→4）**: `dueStep=3` のタスク（`Inventory:azResourceList`、`defenderSoftwareInventory=利用可` 時 `Defender:softwareinventories`）が全て terminal＋証跡付きか。
-- **G2（手順 4→5）**: `dueStep=4` のタスク（`defenderForCloud=利用可` 時 `Defender:assessments`）が全て terminal＋証跡付きか。
-- **G3（手順 5→6）**: `dueStep=5` のタスク（`updateManager=利用可` 時 `UpdateManager:patchassessmentresources`）が全て terminal＋証跡付きか。
+- **G2（手順 4→5）**: `dueStep=4` のタスク（`defenderForCloud=利用可` 時 `Defender:assessments`、常時 `CVE:runtimeLookup`）が全て terminal＋証跡付きか。
+- **G3（手順 5→6）**: `dueStep=5` のタスク（`updateManager=利用可` 時 `UpdateManager:patchassessmentresources`、常時 `CVE:osLookup`）が全て terminal＋証跡付きか。
 - **G4（手順 6-3・最終）**: `collectionPlan[]` に `pending` が 0 件で、全タスクが terminal＋証跡付きか。**加えて `status==done` のタスクは対象配列が非空、`利用可` のサブ能力のタスクが `pending`/欠落でない**ことを機械チェックする（手順 6-3 の検証(11)）。
 - **いずれのゲートも、`pending` が残っていれば次工程へ進まず、当該タスクの照会を実行してから再判定する**。この「切れ目ごとに pending を 0 にする」運用が収集し損ねを防ぐ本体。
 
