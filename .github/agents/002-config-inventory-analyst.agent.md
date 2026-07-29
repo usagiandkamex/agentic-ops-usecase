@@ -243,15 +243,15 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   "inv csv=$((Import-Csv ($d + '/inventory.csv')).Count) / findings inventory=$($j.inventory.Count) / totalResources=$($j.summary.totalResources)"  # 3 者一致が期待（権威件数・省略なし）
   (Get-ChildItem "$d/findings*.json").Count  # 期待 1（別名なし）
   ($j.collectionPlan | Where-Object { $_.status -eq 'pending' } | Measure-Object).Count  # 期待 0（収集ゲート G4・pending 残存なし）
-  # done ⟺ 対象配列が非空（相互チェック）。softwareinventories→runtimeInventory / assessments→(securityRecommendations+vulnerabilities) / patchassessmentresources→patchAssessment
-  $map=@{ 'Defender:softwareinventories'=$j.runtimeInventory.Count; 'Defender:assessments'=($j.securityRecommendations.Count + $j.vulnerabilities.Count); 'UpdateManager:patchassessmentresources'=$j.patchAssessment.Count }
+  # done ⟺ 対象配列が非空（相互チェック）。softwareinventories→runtimeInventory / assessments→(securityRecommendations+vulnerabilities) / patchassessmentresources→patchAssessment / CVE:runtimeLookup・CVE:osLookup→vulnerabilities（常時タスク・〈参照 J-1〉）
+  $map=@{ 'Defender:softwareinventories'=$j.runtimeInventory.Count; 'Defender:assessments'=($j.securityRecommendations.Count + $j.vulnerabilities.Count); 'UpdateManager:patchassessmentresources'=$j.patchAssessment.Count; 'CVE:runtimeLookup'=$j.vulnerabilities.Count; 'CVE:osLookup'=$j.vulnerabilities.Count }
   $j.collectionPlan | ForEach-Object { if($_.status -eq 'done' -and $map.ContainsKey($_.task) -and $map[$_.task] -eq 0){ "NG: $($_.task) は done だが対象配列が空" } }  # 出力なしが期待
   foreach($p in 'index.html','inventory.html','remediation.html'){ $h=Get-Content -Raw "$d/$p"; "$p footer=$([bool]($h -match '<footer'))/crumb=$([bool]($h -match 'class=\"crumb\"'))" }  # 各 True/True 期待（(12)）
   $req=@{'index.html'=@('summary','category','top-remediation');'inventory.html'=@('inventory-resources','inventory-runtime');'remediation.html'=@('remediation-findings','remediation-eol','remediation-patch','remediation-secrec')}; foreach($f in $req.Keys){ $c=Get-Content -Raw "$d/$f"; foreach($s in $req[$f]){ if($c -notmatch "SECTION: $s"){ "NG: $f にセクション $s が無い" } } }  # 出力なしが期待（(15)）
   ($j.inventory | Where-Object { $_.issue -notin '要対応','要判断','なし' } | Measure-Object).Count  # 期待 0（(13) issue 全件確定）
   # (16) <thead> 列定義の固定: テンプレの thead 行と生成物が一致（不一致は出力）
   $tpl='usecases/002-config-inventory-vulnerability/report-template'; foreach($f in 'index.html','inventory.html','remediation.html'){ $a=([regex]::Matches((Get-Content -Raw "$tpl/$f"),'<thead><tr>.*?</tr></thead>').Value) -join ''; $b=([regex]::Matches((Get-Content -Raw "$d/$f"),'<thead><tr>.*?</tr></thead>').Value) -join ''; if($a -ne $b){ "NG: $f の <thead> がテンプレと不一致" } }  # 出力なしが期待（(16)）
-  (Select-String -Path "$d/inventory.html" -Pattern 'issue-(?!yes|check|no)' -AllMatches | Measure-Object).Count  # 期待 0（(17) 不正な issue クラスなし）
+  (Select-String -Path "$d/inventory.html" -Pattern 'issue-(?!(?:yes|check|no)\b)' -AllMatches | Measure-Object).Count  # 期待 0（(17) 不正な issue クラスなし・単語境界で issue-nope/issue-yesterday 等も検出）
   (Get-ChildItem "$d/temp-*","$d/findings-*.json" -ErrorAction SilentlyContinue | Measure-Object).Count  # 期待 0（(18) 一時/別名ファイルなし）
   "progress.md exists=$(Test-Path ($d + '/progress.md')) / 未チェック=$((Select-String -Path ($d + '/progress.md') -Pattern '\[ \]' -AllMatches | Measure-Object).Count)"  # exists=True / 未チェック=0 期待（(14)）
   $j.collectionPlan | Select-Object task,status,evidence | Format-Table -Auto  # 全タスク terminal＋証跡付きを目視
