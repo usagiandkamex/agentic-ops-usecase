@@ -211,11 +211,11 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - (11) **収集ゲート G4（最終・〈参照 J〉）**: `collectionPlan[]` に `pending` が **0 件**。全タスクが terminal（done / empty-verified / downgraded）で、各 terminal に**証跡**（実行クエリ・resultCount・収集時刻、または降格理由）が付いている。**`empty-verified` は該当サブ能力が `利用可` と確認できた場合のみ**（サブ能力 off は `downgraded`＝確認不可）。**`status==done` のタスクは対象配列が非空**（例: `Defender:softwareinventories=done` なのに `runtimeInventory[]` が空＝不合格）。**`利用可` のサブ能力のタスクが `pending`/欠落でない**。
 - (12) **テンプレ準拠（逐語複製）**: 各 HTML に `<footer>` と `class="crumb"` が存在し、`<style>` ブロックがテンプレートと同一（主要 CSS セレクタが欠落していない）。**テンプレを書き直して footer/crumb/style を削除・簡略化していない**（問題レポートの再発防止）。
 - (13) **issue 確定**: `inventory[]` の全要素の `issue` が `要対応` / `要判断` / `なし` のいずれか（**空文字が無い**）。inventory.html の課題列ピルも同値で表示。
-- (14) **進捗トラッキング（〈参照 K〉）**: `progress.md` が存在し、手順 1〜7 が完了マーク、ゲート G0〜G4 が OK、反スクリプト宣言・テンプレ準拠チェックが全て済み（`未` / `NG` / 未チェック `[ ]` が残っていない）。
+- (14) **進捗トラッキング（〈参照 K〉）**: `progress.md` が存在し、**全チェックボックス（手順 1〜7・ゲート G0〜G4・反スクリプト宣言・テンプレ準拠チェック）が `[x]`**（未チェック `[ ]` が 0 件）。先頭コメントは複製後に削除済み。
 
   ```powershell
   $d='usecases/002-config-inventory-vulnerability/reports/<YYYYMMDD-HHmmss>'
-  (Select-String -Path "$d/*" -Pattern '\{\{|<!-- BEGIN|<!-- END' -AllMatches | Measure-Object).Count  # 期待 0
+  (Select-String -Path "$d/*.html","$d/*.csv","$d/findings.json" -Pattern '\{\{|<!-- BEGIN|<!-- END' -AllMatches | Measure-Object).Count  # 期待 0（成果物のみ・progress.md は説明用にマーカーを含むため除外）
   foreach($f in 'inventory.csv','runtime-inventory.csv','vulnerabilities.csv','security-recommendations.csv'){ $b=[IO.File]::ReadAllBytes("$d/$f"); "$f=$($b[0]),$($b[1]),$($b[2])" }  # 期待 239,187,191
   $j=Get-Content "$d/findings.json" -Raw | ConvertFrom-Json  # 例外なし=有効 JSON
   Import-Csv "$d/inventory.csv" | %{ ($_.PSObject.Properties|Measure-Object).Count } | Sort-Object -Unique  # 1 値のみ＝列ズレなし
@@ -227,7 +227,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   $j.collectionPlan | ForEach-Object { if($_.status -eq 'done' -and $map.ContainsKey($_.task) -and $map[$_.task] -eq 0){ "NG: $($_.task) は done だが対象配列が空" } }  # 出力なしが期待
   foreach($p in 'index.html','inventory.html','remediation.html','security-recommendations.html'){ $h=Get-Content -Raw "$d/$p"; "$p footer=$([bool]($h -match '<footer'))/crumb=$([bool]($h -match 'class=\"crumb\"'))" }  # 各 True/True 期待（(12)）
   ($j.inventory | Where-Object { $_.issue -notin '要対応','要判断','なし' } | Measure-Object).Count  # 期待 0（(13) issue 全件確定）
-  "progress.md exists=$(Test-Path "$d/progress.md") / 未完了=$((Select-String -Path "$d/progress.md" -Pattern '\[ \]|NG' -AllMatches | Measure-Object).Count)"  # exists=True / 未完了=0 期待（(14)）
+  "progress.md exists=$(Test-Path "$d/progress.md") / 未チェック=$((Select-String -Path "$d/progress.md" -Pattern '\[ \]' -AllMatches | Measure-Object).Count)"  # exists=True / 未チェック=0 期待（(14)）
   $j.collectionPlan | Select-Object task,status,evidence | Format-Table -Auto  # 全タスク terminal＋証跡付きを目視
   ```
 
@@ -474,7 +474,7 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
 **K-1. progress.md の作成と更新**
 
 - 手順 3 冒頭で `report-template/progress.md` を複製し `reports/<YYYYMMDD-HHmmss>/progress.md` を作成する（`findings.json` と同じフォルダ・同じく 1 回だけの `create_file`）。
-- **各手順の切れ目（手順 1→2→3→4→5→6→7、ゲート G0〜G4）で `replace_string_in_file` により該当項目を更新**（`[ ]`→`[x]`、ゲートは `OK`/`NG`）してから次工程へ進む。
+- **各手順の切れ目（手順 1→2→3→4→5→6→7、ゲート G0〜G4）で `replace_string_in_file` により該当項目を更新**（`[ ]`→`[x]`。ゲートも完了で `[x]`、失敗は末尾の記録欄に記す）してから次工程へ進む。**複製後に先頭コメントを削除する**（検証(14)の誤検知防止）。
 - `progress.md` は「手順とゲートの消化状況・テンプレ準拠チェック・反スクリプト宣言」を軽量に追う一覧で、`findings.json` の `collectionPlan[]`（収集タスク契約）/ `consistencyChecks[]`（照合記録）とは役割が別（二重管理しない）。
 - `progress.md` は `reports/<YYYYMMDD-HHmmss>/` 配下のローカル成果物（`.gitignore` 済み・コミットしない）。R2 の許可出力に含む。
 
