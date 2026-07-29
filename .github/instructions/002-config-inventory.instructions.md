@@ -13,6 +13,7 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 - **流れ**: ① スコープ確認 → ② 収集能力の判別 →〈実行前の最終確認（承認）〉→ ③ 棚卸収集 → ④ 脆弱性照合 → ⑤ パッチ判定 → ⑥ レポート生成（検証ゲート）→ ⑦ 最終レビュー。
 - **中核成果物**: `findings.json`（単一のデータ源。③で作り始め④〜⑥で追記・確定）→ HTML 3 ページ（index / inventory / remediation）＋CSV 4 種を生成。
 - **収集し損ねを防ぐ切れ目ゲート**: ②で `利用可` の経路から必須収集タスクを `collectionPlan[]` に materialize し、各手順の切れ目（②→③→④→⑤→⑥）で証跡付きに消化されるまで先へ進めない（〈参照 J〉）。
+- **安全な並列化で短縮（READ 専用・判定精度・出力構造は不変）**: 「直列の確定 → 並列の収集ウェーブ → 直列のマージ・書き込み」。手順 3-1 の `az resource list`（件数正典）確定までは直列、確定後は独立 4 トラック（A:MDVM / B:Defender / C:Update Manager / D:VM/PaaS 詳細）を並列（Azure 詳細は `ForEach-Object -Parallel -ThrottleLimit 5`）。公開 CVE/EOL は製品×版数で一意化して最大 4 並列バッチ＋fetch 台帳で重複取得を禁止。**書き込みは親 Agent が直列**に決定論マージ（並列競合・重複所見なし）。429/API 制限は指数バックオフ、各タスクの `durationSec`/`retryCount` 等を evidence と `progress.md` に記録（詳細はエージェント定義〈参照 E〉）。
 - **進捗トラッキング `progress.md`**: **起動直後（①スコープ確認より前）**に `report-template/progress.md` を `read_file` で読み `create_file` で作成し（保存先フォルダもここで確定）、各手順の切れ目で `replace_string_in_file` により更新・自己検査してワークフロー遵守（手順スキップ・テンプレ改変・スクリプト生成の防止）を可視化する。**〈実行前の最終確認〉承認は停止点ではなく、承認後は同一ターンで③以降を継続**する（〈参照 K〉）。
 - **確認は原則 1 回**（実行前の最終確認）。承認後は自律実行。**全工程 READ 専用**。
 
@@ -42,7 +43,7 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 - **件数の正典は `az resource list`（実行セッション間でブレさせない）**: リソースの全列挙と件数は `az resource list -g <RESOURCE_GROUP> --subscription <SUBSCRIPTION_ID> -o json` を**唯一の権威ソース**とし、その `id` 集合で棚卸対象を確定する。`inventory[]` の件数・`summary.totalResources` はこの権威件数と**必ず一致**させる。Resource Graph / Azure MCP は**版数などの詳細補完と 0 件裏取り専用**で、件数を増減させない（正典は常に `az resource list`）。以降の手順は確定した `id` をキーに情報を紐付け、各工程で列挙し直さない（詳細はエージェント定義〈参照 I〉）。
   **子/プロキシリソースは件数対象外（行を増やさない）**: `az resource list` に現れない子/プロキシ（subnet・NSG ルール等）は `inventory[]` の新規行にせず、版数は親行のフィールドか `runtimeInventory[]`（件数に含めない詳細表）へ退避する（proxy は実質ドロップだが版数情報は失わない。`Microsoft.Sql/servers/databases` のように `az resource list` に現れる子は登録対象）。
   **Resource Graph 単独結果で「0 件」と即断しない**。0 件時は `az account show`（接続スコープ）・`az group show`（RG 存在）・別経路の再列挙で裏取りしてから結論づける。Resource Graph と `az resource list` の件数差は子/プロキシの扱い差で正常に生じるため **不整合ではなく参考情報（informational）** として記録する。
-- **並列化**: 詳細照会は並列でよい（すべて READ のため安全）。`ForEach-Object -Parallel` などコマンド内部のジョブで並列化（run_in_terminal を同時多重で呼ばない）。
+- **並列化（収集ウェーブ）**: 詳細照会は並列でよい（すべて READ のため安全）。手順 3-1 の権威リスト確定後、独立 4 トラック（A:MDVM `softwareinventories` / B:Defender `assessments` / C:Update Manager `patchassessmentresources` / D:VM/VMSS/PaaS/App Service/AKS 詳細）を並列に走らせる。`ForEach-Object -Parallel -ThrottleLimit 5` などコマンド内部のジョブで並列化（run_in_terminal を同時多重で呼ばない）。**無制限並列は禁止（ThrottleLimit=5）**。worker は fetch のみで、`findings.json`/`progress.md` への追記は**親 Agent が直列**に決定論マージして行う（`(resourceId, findingType, identifier)` キーで重複排除・並列競合や重複所見を作らない）。各トラックの `startedAt`/`endedAt`/`durationSec`/`resultCount`/`retryCount` を記録する。
 - **大量リソースは 100 件バッチ**: 権威件数（`az resource list`）が 100 件を超える場合、`resourceId` 集合を 100 件ずつに分割し、バッチ単位で詳細照会→`findings.json` へ逐次追記→`progress.md` のバッチ進捗を更新する。件数の正典は常に `az resource list` 全体（バッチで件数を増減しない）。`metadata` に `batchSize=100`/`batchCount` を記録。
 - **逐次追記と件数照合（まとめ書き禁止）**: 照会 1 回ごとに対応配列へその場で追記し、`collectionPlan[].evidence.resultCount` を更新。各手順の切れ目で「期待件数（resultCount 合計）＝実配列件数」を照合して追記漏れを補完する。
 - **ランタイム表は 4 系統を統合**: `runtimeInventory[]` に (A) VM/VMSS 内部、(B) DB ホスト VM の DB エンジン、(C) PaaS マネージド DB の DB エンジン版数、(D) App Service/Functions/AKS ランタイムを同一表（7 列）に格納する（列は増やさない・区分で識別）。
@@ -56,7 +57,7 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 
 ## 判定（脆弱性 / パッチ）
 
-- **脆弱性照合**: Defender（有効時）の相関 CVE、EOL は endoflife.date（主）/ Microsoft Lifecycle（補助）を Web の GET で参照。是正要否は `要` / `要確認` / `不要` で表し、各判定に**根拠**（CVE ID / EOL 日付 / 参照 URL / 情報源）を付ける（推測 URL は使わない）。決定論の判定基準はエージェント定義〈参照 B〉に従う。**加えて、`runtimeInventory[]` の全成分（製品×版数で重複排除）と現行 OS 版数を、公開 CVE ソース（NVD / ディストリ・ベンダのセキュリティトラッカー / MITRE / GHSA）で照合し Critical/High を `vulnerabilities[]`（CVE）に追加**する（`source` にソース名。該当版数が影響を受ける CVE のみ・推測 CVE を作らない）。
+- **脆弱性照合**: Defender（有効時）の相関 CVE、EOL は endoflife.date（主）/ Microsoft Lifecycle（補助）を Web の GET で参照。是正要否は `要` / `要確認` / `不要` で表し、各判定に**根拠**（CVE ID / EOL 日付 / 参照 URL / 情報源）を付ける（推測 URL は使わない）。決定論の判定基準はエージェント定義〈参照 B〉に従う。**加えて、`runtimeInventory[]` の全成分（製品×版数で重複排除）と現行 OS 版数を、公開 CVE ソース（NVD / ディストリ・ベンダのセキュリティトラッカー / MITRE / GHSA）で照合し Critical/High を `vulnerabilities[]`（CVE）に追加**する（`source` にソース名。該当版数が影響を受ける CVE のみ・推測 CVE を作らない）。**公開 CVE/EOL 照合は製品×版数で一意化して最大 4 並列バッチで fetch し、fetch 台帳で同一 製品×版数×URL の重複取得を禁止**、429/API 制限は指数バックオフ再試行、結果は親 Agent が `(resourceId, findingType, identifier)` キーで決定論マージする（〈参照 E〉）。
 - **脆弱性と構成推奨の分離**: `vulnerabilities`（findingType=CVE/EOL/PatchMissing）と `securityRecommendations`（Defender の構成系推奨：マネージド ID 未使用・診断ログ・publicNetworkAccess・TLS 等）を別ファイルに分ける。構成系を CVE と誤ラベルしない。
 - **パッチ適用可否**: Update Manager の既存結果を READ 参照し「適用推奨／適用検討／情報なし」を根拠件数とともに判定。適用は実行せず提示に留める。
 
@@ -64,6 +65,7 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 
 - 成果物は **`report-template/` のテンプレートを `read_file` で読み込み、`{{TOKEN}}` と `BEGIN/END` 区域・`{{*_ROWS}}` を実データで置換した完成ファイルを `create_file` で書き出す**
   （`Copy-Item` 等のシェルコピー・生成スクリプトで作らない＝未置換が残る／スクリプト作成は禁止。詳細は上記「成果物は create_file と編集で作る」）。
+- **生成の並列化と検証ゲート不変**: `findings.json` 確定後は HTML/CSV テンプレを並列に `read_file` し、**別々の成果物ファイルへ並列に書き出してよい**（同一ファイルを多重に書き込まない）。並列化は READ・生成の高速化のみで、**検証ゲート (1)〜(18)・収集ゲート G0〜G4・件数正典・SECTION アンカー・BOM・出力構造は一切変えない**。`collectionPlan[].evidence` には計時（`durationSec`/`retryCount` 等）を非破壊的に加える（JSON 構造・列・アンカーは不変）。
 - **対象は対象 RG 内の全リソース**（`inventory[]` に全列挙）。`category` は機能別 8 分類 `Compute`/`AppRuntime`/`Container`/`Data`/`Network`/`SecurityIdentity`/`Monitoring`/`Other`（★=版数/パッチ管理の主対象: Compute/AppRuntime/Container/Data）。
 - **ページの並び順**: 概要(index) → 棚卸インベントリ → 是正が必要な項目（重要度高・棚卸の直後。EOL・OS パッチ・セキュリティ構成推奨をこのページに集約）。ランタイムは独立ページにせず棚卸インベントリに統合。セキュリティ構成推奨は独立ページにせず remediation 下部に統合（CSV は別ファイルのまま）。
 - **全件掲載（省略禁止）・テンプレ改変禁止**: BEGIN/END 区域は対応配列の全要素を 1 行ずつ展開する（`inventory[]` が 57 件なら 57 行。「その他 N リソース」のような集約行を作らない）。テンプレートの見出し・列・構造を改変しない（独自 HTML を書き起こさない）。
