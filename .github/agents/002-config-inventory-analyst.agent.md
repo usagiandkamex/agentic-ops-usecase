@@ -178,14 +178,14 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 
 **3-3. 収集ウェーブ（並列化・取得情報が多いため推奨。READ 専用のまま短縮）**
 
-- **直列 → ウェーブ → 直列**: 3-1 の `az resource list`（件数正典の確定・0 件裏取り）までは**直列**。確定後、互いに独立した **収集ウェーブ**の 4 トラックを**並列**に開始する（すべて READ のため安全）。
+- **直列 → ウェーブ → 直列**: 3-1 の**権威列挙**（有界な `az resource list` ＋ ARM REST フォールバック・件数正典の確定・0 件裏取り・〈参照 I-4〉）までは**直列**。確定後、互いに独立した **収集ウェーブ**の 4 トラックを**並列**に開始する（すべて READ のため安全）。
   - **Track A**: MDVM `softwareinventories` → `runtimeInventory[]`（(A)(B) 系統）。
   - **Track B**: Defender `assessments` / `subassessments` → `securityRecommendations[]` / `vulnerabilities[]`。
   - **Track C**: Update Manager `patchassessmentresources`（既存結果の READ）→ `patchAssessment[]`。
   - **Track D**: VM/VMSS/PaaS/App Service/AKS の詳細照会（版数・siteConfig・kubernetesVersion 等）→ `inventory[]` 各行 / `runtimeInventory[]`（(C)(D) 系統）。
 - **並列の実装**: Azure 詳細照会（Track D 等）は **`ForEach-Object -Parallel -ThrottleLimit 5`**（外部変数は `$using:`）で**コマンド内並列**、独立した MCP / READ ツール呼び出しは **1 ターンにまとめてバッチ並列**で実行する。端末コマンドは 1 度に 1 本（run_in_terminal を同時多重で呼ばない）。**無制限並列は禁止**（ThrottleLimit=5・HTTP 429 / API 制限時は指数バックオフ再試行 → 取得可能分のみ載せフォールバック理由を evidence に記録）。詳細は〈参照 E〉。
 - **書き込みは親 Agent が直列（競合防止）**: worker は fetch のみ。各トラックの結果は**親 Agent が配列ごとの安定キー（〈参照 B〉）で重複排除して安定順に決定論マージ**し、`findings.json` へ**直列に追記**する（複数トラックから同一ファイルを同時に書かない・R2）。Track A/D は手順 3 で着地（G1）、Track B/C は fetch を早く始めてよいが**着地検証は各 `dueStep`（G2/G3）**で行う（`dueStep` は fetch 開始時刻ではなく**検証期限**・〈参照 J〉）。
-- **計時**: 各トラック / タスクに `startedAt` / `endedAt` / `durationSec` / `resultCount` / `retryCount` を evidence（既存文字列規約の非破壊拡張・〈参照 F〉）と `progress.md` に記録する。
+- **計時**: 各トラック / タスクの `resultCount` は `evidence.resultCount` に、計時（`startedAt` / `endedAt` / `durationSec` / `retryCount`）は `progress.md`（必要なら `evidence.note`）に記録する（`evidence` はテンプレート同様 `query`/`resultCount`/`collectedAt`/`note` の 4 項目・計時フィールドは持たない・〈参照 F〉）。
 
 - 🔍 **レビュー 3**: (a) **有界な権威列挙**（`az resource list` を 120 秒で 1 回・失敗時は ARM REST `2021-04-01`/`$top=200` を `nextLink` 完走までフォールバック・〈参照 I-4〉）で正典（完走した重複排除済み `id` 集合）を確定し、`inventory[]` 件数が正典件数と一致するか（0 件時は接続スコープ＋3 経路で裏取り。RG 存在＋完走を確認できた場合のみ `empty-verified`）。**両経路失敗なら `Inventory:authoritativeResourceEnumeration=failed` で G1 を通さず停止**したか（部分データを正典/`done` にしていないか）。(b) 全列挙を漏れなく `inventory[]` に登録し、★カテゴリの版数を取得したか。(c) **整合性チェック**: `defenderSoftwareInventory`（MDVM）が「利用可」なら `softwareinventories` を実際に照会したか、実収集結果と `capabilityDetection` が矛盾しないか（MDVM 未有効は「確認不可」であって「該当なし」と混同しない）。矛盾は `consistencyChecks[]` に記録・解消したか。(d) **切れ目ゲート G1（〈参照 J〉）**: `dueStep=3` の `collectionPlan[]` タスク（`Inventory:authoritativeResourceEnumeration`、`defenderSoftwareInventory=利用可` なら `Defender:softwareinventories`）が**すべて証跡付きで合格 terminal**（done/empty-verified/downgraded。**`failed`/`pending` は合格に含めない**）か。`pending` が 1 件でも残れば手順 4 へ進まず、当該照会を実行する。**消化後に `progress.md` の手順 3・G1 を更新する（〈参照 K〉）。** (e) **件数照合＋バッチ完了**: 各照会の期待件数（evidence の resultCount 合計）と `inventory[]`/`runtimeInventory[]` の実件数が一致するか（不一致は追記漏れとして補完し `consistencyChecks[]` に記録）。正典確定後、100 件超は全バッチ（`N/M`）を完了したか。(f) **並列化の安全性**: 収集ウェーブが READ 専用・ThrottleLimit=5 で、書き込みが親 Agent 直列・決定論マージで重複所見が無いか。各タスクに計時（durationSec/retryCount 等）を記録したか。(g) 取得不可を明示したか。(h) すべて READ か（タイムアウト後にバックグラウンドの `az` プロセスが残っていないか）。
 
@@ -390,7 +390,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 6. **EOL の Web 取得は必要な URL を先に列挙して 1 回でまとめて**取得（同一 product を重複取得しない）。
 7. **公開 CVE の Web 取得も重複排除・まとめ取得（ソース別並列予算 /〈参照 M〉）**。`runtimeInventory[]` / OS 版数を **製品×版数で一意化**してから NVD/ディストリ・ベンダ/MITRE/GHSA に問い合わせ、**〈参照 M〉のソース別並列予算（NVD 無キー=4／APIキー有り=8–10、他ソースは各 6–8。多様な componentType では実効 6–8 並列。429 を受けたソースは予算を一時半減）**（または CVE ルックアップ・ワーカー〈参照 N〉）で fetch する。**fetch 台帳（fetchLedger）は親 Agent が保持**し、各 製品×版数×URL を `pending`/`succeeded`/`failed` で管理する。**重複取得の抑止は `succeeded` の項目にのみ適用**し、`failed`（429/タイムアウト/権限）は重複禁止にせず**指数バックオフで再割当・再試行**する（手順 4・5 で同じ台帳を共有）。大量成分は 100 件バッチ（手順 3-1）と整合させ、取得時点を `metadata` に記録する。**「取得可能分のみ載せる」のは全再試行後もなお `failed` が残る場合に限り**、その製品×版数を evidence に明示して当該タスクは `done` にせず `downgraded`（理由・失敗対象付き）にする（部分取得で `done`/`empty-verified` にしない・〈参照 J-2〉）。
 8. **書き込みは親 Agent が直列・決定論マージ（競合防止）**。並列に走るのは fetch（READ）のみ。各トラック/バッチ/ワーカーの結果は**親 Agent が配列ごとの安定キー（〈参照 B〉）で重複排除して安定順にマージ**し、`findings.json` / `progress.md` へ**直列に**書き込む（複数 worker から同一ファイルを同時に書かない）。完了順に依存せず同じ入力なら同じ結果になる（重複所見・順序ブレを作らない）。
-9. **計時（evidence の非破壊拡張）**。各タスク/トラック/バッチに `startedAt` / `endedAt` / `durationSec` / `resultCount` / `retryCount` を `collectionPlan[].evidence`（既存文字列規約の拡張・JSON 構造は非破壊）と `progress.md` に記録し、どこがボトルネックかを可視化する（外部 API 遅延も evidence に記録）。
+9. **計時（progress.md に記録）**。各タスク/トラック/バッチの `resultCount` は `collectionPlan[].evidence.resultCount` に、計時（`startedAt` / `endedAt` / `durationSec` / `retryCount`）は `progress.md`（必要なら `evidence.note`）に記録し、どこがボトルネックかを可視化する（`evidence` はテンプレート同様 `query`/`resultCount`/`collectedAt`/`note` の 4 項目・計時フィールドは持たない。外部 API 遅延も `progress.md`／`evidence.note` に記録）。
 
 ### 参照 F. レポート出力仕様（ファイル・トークン・文字コード・フォルダ）
 
@@ -551,7 +551,7 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
   | `updateManager=利用可` | `UpdateManager:patchassessmentresources` | 5 | `pending` | `patchAssessment[]` |
   | `updateManager=未構成/参照不可` | `UpdateManager:patchassessmentresources` | 5 | `downgraded`（確認不可（Update Manager 未構成）） | `patchAssessment[]` |
 
-- `collectionPlan[]` の要素: `task` / `requiredBy`（例 `defenderSoftwareInventory=利用可`）/ `dueStep`（3/4/5）/ `status`（`pending`→terminal）/ `evidence`（実行クエリ・resultCount・収集時刻・`startedAt`/`endedAt`/`durationSec`/`retryCount`、または降格理由）。
+- `collectionPlan[]` の要素: `task` / `requiredBy`（例 `defenderSoftwareInventory=利用可`）/ `dueStep`（3/4/5）/ `status`（`pending`→terminal）/ `evidence`（テンプレート同様 `query`＝実行クエリ・`resultCount`・`collectedAt`＝収集時刻・`note`＝降格理由等の 4 項目。計時（`startedAt`/`endedAt`/`durationSec`/`retryCount`）は `evidence` に持たせず `progress.md`（必要なら `evidence.note`）に記録）。
 - **`dueStep` は「検証期限」（fetch 開始時刻ではない）**: 収集ウェーブ（〈参照 E〉）では Track B/C の fetch を手順 3 の段階で**早期に並列開始してよい**が、その**着地検証は各 `dueStep` の切れ目ゲート**（G2=dueStep4 / G3=dueStep5）で行う。つまり `dueStep` は「この手順の切れ目までに terminal＋証跡付きで着地していなければならない**検証期限**」を意味する。早く fetch しても、着地とゲート判定は `dueStep` の切れ目で確定する（G1/G2/G3 は着地検証ゲートとして維持）。
 - **CVE ルックアップは常時タスク（Web GET は常時利用可）＋完全性の要件**: `CVE:runtimeLookup` / `CVE:osLookup` は常に `pending` で登録し、**対象（製品×版数 / OS 版数）を一意化した `expectedTargets` 件すべてが証跡付きで完結（`succeeded`＝照会成功、該当なしを含む）してから**のみ terminal にする。全対象が完結し 1 件以上 CVE ありなら `done`（`vulnerabilities[]` 非空）、全対象が完結し該当 CVE 皆無なら `empty-verified`、**全再試行後もなお `failed`（API 限界/レート/権限）が残るなら `downgraded`**（`evidence` に失敗した製品×版数を列挙）。off にはならない（Web は常時利用可）。**一部の製品×版数が未照合のまま `done`/`empty-verified` にしない**（`evidence` に `expectedTargets`/`succeeded`/`failed`/`resultCount` を記録）。
 - **権威列挙は常時タスク＋固有の `failed` 終端**: `Inventory:authoritativeResourceEnumeration` は常に `pending` で登録する。`az resource list`（高速経路）と ARM REST（フォールバック）のいずれかが**完走**したら `done`（`inventory[]` 非空）、**RG 存在＋ページング完走を確認した空 RG** は `empty-verified`（`inventory[]`=0）。**両経路とも失敗（タイムアウト・エラー・未完走）したときは `failed`**（下記 J-2）。off にはならない（列挙は常に必須）。
