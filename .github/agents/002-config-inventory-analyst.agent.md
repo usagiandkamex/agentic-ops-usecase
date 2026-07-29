@@ -13,6 +13,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 
 - **目的**: 対象 RG 内の全リソースを READ で棚卸 → 各リソースの OS / ランタイム / エンジン版数を一覧化 →
   公開脆弱性情報（Defender for Cloud の相関 CVE / EOL）と照合 → **是正要否**と**パッチ適用可否**を判定 → レポート化。
+  **主眼は Azure 上の Compute 系リソースが利用するランタイムの網羅的な棚卸**（VM/VMSS の OS・言語ランタイム、App Service / **Functions** / Container Apps のランタイム、AKS/コンテナのイメージ・K8s 版数、マネージド DB のエンジン版数を含む）。取得できないものは best-effort とし「取得不可（Reader / MDVM 未有効等）」と明示する。
 - **処理の流れ（手順 1 → 7）**:
   1. スコープ確認 → 2. 収集能力の判別 → **〈実行前の最終確認（承認）〉** → 3. 棚卸収集 →
   4. 脆弱性照合 → 5. パッチ適用可否判定 → 6. レポート生成（検証ゲート）→ 7. 最終レビュー。
@@ -162,8 +163,8 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   **`inventory[]` の要素数が `az resource list` の件数と一致することを、登録直後にその場で確認する**（不一致なら登録漏れ/重複を修正）。
 - **`inventory[]` の行を増やさない（件数固定の要）**: 詳細照会で得た**子/プロキシリソース**（subnet・NSG ルール・`az resource list` に現れない内部コンポーネント等）を `inventory[]` の新規行として追加しない（＝件数からはドロップ）。版数などの詳細は**親リソースの行のフィールド**（`runtime` に OS/ランタイム/エンジン版数を集約）に格納するか、件数に含めない詳細表 `runtimeInventory[]` に退避する。これにより `inventory[]` の件数は常に `az resource list` と一致する（proxy の版数情報は失わない）。
 - そのうち **版数/パッチ管理の主対象カテゴリ（★ Compute / AppRuntime / Container / Data）** は、種別ごとの詳細照会（READ）で版数情報を取得する（詳細は〈参照 A〉）。
-- **リソース内部の利用ランタイム・ソフトウェア**を READ で収集し `runtimeInventory[]` に格納する（列は 7 列のまま。取得源・範囲は〈参照 A〉）。**次の 4 系統をすべて同一表 `runtimeInventory[]` に統合する（VM 内部だけにしない）**:
-  - (A) **VM/VMSS 内部**（OS パッケージ・言語ランタイム・ミドルウェア。Defender softwareinventories。区分=`ospackage`/`language`/`middleware`）。
+- **リソースの利用ランタイム・ソフトウェア**を READ で収集し `runtimeInventory[]` に格納する（列は 7 列のまま。取得源・範囲は〈参照 A〉）。**次の 4 系統をすべて同一表 `runtimeInventory[]` に統合する（VM だけにしない）**:
+  - (A) **VM/VMSS**（OS パッケージ・言語ランタイム・ミドルウェア。Defender softwareinventories。区分=`ospackage`/`language`/`middleware`）。
   - (B) **DB をホストする VM の DB エンジン**（SQL Server on VM 等。`SqlVirtualMachines`/`SqlIaasExtension` と Defender softwareinventories 由来。区分=`dbengine`）。
   - (C) **PaaS マネージド DB の DB エンジン版数**（`az sql db show` / `az postgres|mysql flexible-server show` の `version`。区分=`dbengine`）。
   - (D) **App Service / Functions / Container Apps のランタイム**（siteConfig の linuxFxVersion 等。区分=`runtime`）、および AKS の kubernetes/ノードイメージ版数。
@@ -297,15 +298,15 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 
 > **行を増やさない（件数固定の要・〈参照 I〉）**: 上記の詳細照会は各リソースの**既存の `inventory[]` 行を補完**するためのもの。子/プロキシリソースや内部コンポーネントを新規行として `inventory[]` に足さない（版数は行フィールド or `runtimeInventory[]` へ）。件数は常に `az resource list` と一致させる。
 
-**内部・ランタイムの棚卸（VM/VMSS 内部 ＋ DB ホスト VM の DB エンジン ＋ PaaS マネージド DB ＋ App Service/AKS ランタイムを同一表に統合）**:
+**ランタイムの棚卸（VM/VMSS ＋ DB ホスト VM の DB エンジン ＋ PaaS マネージド DB ＋ App Service/AKS ランタイムを同一表に統合）**:
 
-- **Defender ソフトウェアインベントリ（VM 内部・DB ホスト VM）**: `az graph query -q "securityresources | where type =~ 'microsoft.security/softwareinventories' | where id contains '<RESOURCE_GROUP>'"`
+- **Defender ソフトウェアインベントリ（VM・DB ホスト VM）**: `az graph query -q "securityresources | where type =~ 'microsoft.security/softwareinventories' | where id contains '<RESOURCE_GROUP>'"`
   → VM 内の DB エンジン（SQL Server on VM 等）・言語ランタイム・ミドルウェアの名称・版数・ベンダ（例: postgresql-16 16.14、python3.10）を抽出（MDVM 有効時）。結果は `runtimeInventory[]` に格納（区分=`dbengine`/`language`/`middleware`/`ospackage`）。
 - **PaaS マネージド DB の DB エンジン版数（MDVM 非依存）**: `az sql db show` / `az postgres flexible-server show` / `az mysql flexible-server show` の `version` を `runtimeInventory[]` にも 1 行足す（区分=`dbengine`）。
 - **App Service/Functions/Container Apps ランタイム（MDVM 非依存）**: siteConfig の linuxFxVersion 等を `runtimeInventory[]` に足す（区分=`runtime`）。
 - 補助: Update Manager のパッケージ版数（`patchassessmentresources`）、VM 拡張機能、AKS の kubernetes/ノードイメージ版数（いずれも READ）。
-- MDVM 未有効等で VM 内部が取得不可なら「取得不可（Reader / MDVM 未有効）」と明示し、把握できる範囲（PaaS DB/App Service 版数は MDVM 非依存で取得可）を一覧化する。
-- レポートでは内部ランタイムを独立ページにせず **棚卸インベントリのページ内に統合**する（VM 内部・DB ホスト VM の DB ソフト・PaaS DB・App Service ランタイムを同じ表に整理。〈参照 F〉）。
+- MDVM 未有効等で VM のソフトウェア情報が取得不可なら「取得不可（Reader / MDVM 未有効）」と明示し、把握できる範囲（PaaS DB/App Service 版数は MDVM 非依存で取得可）を一覧化する。
+- レポートではランタイムを独立ページにせず **棚卸インベントリのページ内に統合**する（VM・DB ホスト VM の DB ソフト・PaaS DB・App Service ランタイムを同じ表に整理。〈参照 F〉）。
 
 ### 参照 B. 是正要否の判定基準（決定論・厳守）と `issue` の確定
 

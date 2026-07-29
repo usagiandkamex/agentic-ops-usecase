@@ -37,7 +37,7 @@ agent: 'azure-config-inventory-analyst'
 2. **3-2 全リソースの登録と版数取得**: 権威リストを**すべて（漏れなく・重複なく）`inventory[]` に登録**する（`resourceId` で一意化。`category` は機能別 8 分類。分類基準は〈参照 A〉）。**登録直後に `inventory[]` の件数が `az resource list` の件数と一致することをその場で確認する**。
    **行を増やさない（件数固定）**: 詳細照会で得た子/プロキシ（subnet・NSG ルール・`az resource list` に現れない内部コンポーネント）を `inventory[]` の新規行にしない。版数は親行のフィールドか `runtimeInventory[]` に退避する（〈参照 I〉）。
    版数・ランタイムの詳細は **★カテゴリ（Compute / AppRuntime / Container / Data）**を中心に、種別ごとの詳細照会（READ）で取得する（VM/VMSS のイメージ・osVersion・拡張機能、App Service の siteConfig、AKS の kubernetesVersion、マネージド DB の version 等。取得コマンドは〈参照 A〉）。
-   **内部・ランタイム**（(A) VM/VMSS 内部、(B) DB ホスト VM の DB エンジン、(C) PaaS マネージド DB の DB エンジン版数、(D) App Service/Functions/AKS ランタイムを同一表 `runtimeInventory[]`（7 列・列は増やさない）に統合）を READ で収集する。(A)(B) は Defender ソフトウェアインベントリ
+   **ランタイム**（(A) VM/VMSS、(B) DB ホスト VM の DB エンジン、(C) PaaS マネージド DB の DB エンジン版数、(D) App Service/Functions/AKS ランタイムを同一表 `runtimeInventory[]`（7 列・列は増やさない）に統合）を READ で収集する。(A)(B) は Defender ソフトウェアインベントリ
    `az graph query -q "securityresources | where type =~ 'microsoft.security/softwareinventories' | where id contains '<RESOURCE_GROUP>'"` で名称・版数・ベンダを抽出、(C) は `az sql db show`/`flexible-server show` の version、(D) は siteConfig の linuxFxVersion 等（区分=`ospackage`/`language`/`middleware`/`dbengine`/`runtime` で識別）を `runtimeInventory[]` に格納する。
    **手順 2 で `defenderSoftwareInventory`（MDVM）が「利用可」ならこの照会を必ず実行**して (A)(B) を埋める（省略しない）。空になるのは **`defenderSoftwareInventory=利用可` で PaaS も含め実際に該当ソフトが無い場合のみ**（`empty-verified`）。**MDVM が `未構成/参照不可` なら (A)(B) は「確認不可（MDVM 未有効）」（`downgraded`）**と明示し、`empty-verified`（該当なし）と混同しない（(C)(D) の PaaS 版数は MDVM 非依存で取得可）。
 3. **3-3 並列化**: 対象が複数のときは詳細照会を並列に実行して短縮する（すべて READ のため安全。詳細は〈参照 E〉）。端末コマンドは 1 度に 1 本、並列化はコマンド内部のジョブで。
@@ -45,7 +45,7 @@ agent: 'azure-config-inventory-analyst'
 ## 出力（`findings.json`）
 
 - `inventory[]`（全リソース）: `resourceName, resourceType, category, issue, resourceGroup, location, runtime, extensionsOrImages, collectionSource`（`runtime` は VM→OS / App Service 等→ランタイム / マネージド DB→DB エンジンの版数を単一列に集約）
-- `runtimeInventory[]`: `resourceName, resourceType, component, softwareName, version, vendor, source`（VM 内部・DB ホスト VM の DB エンジン・PaaS DB・App Service ランタイムを統合。`component`=`ospackage`/`language`/`middleware`/`dbengine`/`runtime` 等）
+- `runtimeInventory[]`: `resourceName, resourceType, component, softwareName, version, vendor, source`（VM・DB ホスト VM の DB エンジン・PaaS DB・App Service ランタイムを統合。`component`=`ospackage`/`language`/`middleware`/`dbengine`/`runtime` 等）
 - `issue`（課題）は **手順 6 で確定**する（脆弱性照合・パッチ判定の結果を集約。基準は〈参照 B〉）。この段階では暫定でよい。
 - `collectionSource` の例: `ResourceGraph` / `az` / `Defender` / `UpdateManager`。取得できない項目は「取得不可（Reader の範囲外）」と記載。
 - 最終的に `inventory.csv` / `runtime-inventory.csv`（テンプレートをトークン置換して生成・UTF-8 BOM 付き）に反映される（生成は手順 6・出力仕様は〈参照 F〉）。
