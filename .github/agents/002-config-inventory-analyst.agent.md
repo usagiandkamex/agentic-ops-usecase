@@ -55,8 +55,9 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   - **既存ファイルの更新は編集ツール `replace_string_in_file` を使う**（`create_file` は新規専用で既存を上書きできない）。**同一パスへ 2 回目の `create_file` をしない**。`findings.json` は手順 3 で `create_file` 1 回 → 手順 4/5/6 は `replace_string_in_file` で追記・確定する。
   - **大量行を 1 回で書ききれない場合の安全策**: `create_file` で骨組み＋対象 `<tbody>` 内に一意のセンチネル（例 `<!-- ROWS_HERE -->`）を置いて書き出し、`replace_string_in_file` でセンチネルを実データ行に置換（または分割追記）する。センチネルで確実にアンカーでき、未置換の残存も検知しやすい。
 - リポジトリに書き出してよいのは **`reports/<YYYYMMDD-HHmmss>/` 配下の成果物のみ**（HTML / CSV / `findings.json` / `progress.md`）。
-- **端末（`run_in_terminal`）は次の 2 用途にのみ使う**: ① Azure への **READ 照会**（`az` / `az graph query` 等）、
-  ② CSV の **BOM 付与**（1 行の `Set-Content -Encoding utf8BOM` インラインコマンド）。データ整形・ファイル生成のためのスクリプトは書かない。
+- **端末（`run_in_terminal`）は次の 3 用途にのみ使う**: ① Azure への **READ 照会**（`az` / `az graph query` 等）、
+  ② CSV の **BOM 付与**（1 行の `Set-Content -Encoding utf8BOM` インラインコマンド）、
+  ③ **権威列挙の有界実行**（インラインの `az resource list`／`az rest` を一時ファイルへ出力し、タイムアウト時に `taskkill /PID <id> /T /F` でプロセスツリーを終了する。〈参照 I-4〉）。データ整形・ファイル生成のためのスクリプトは書かない。**一時ファイルへの stdout 出力とプロセスツリー終了は補助スクリプトの新設ではなくローカル端末操作として許可**する（Azure は READ 専用のまま）。
 - **大量データ（多数リソース）でも、`findings.json` の内容を直接組み立てて `create_file` で書き出す**（「量が多いから」を理由にスクリプト生成へ切り替えない。分割が必要なら編集ツールで追記する）。
 
 ### R3. プレースホルダ / 機密（Public リポジトリ）
@@ -240,15 +241,19 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   $j=Get-Content "$d/findings.json" -Raw | ConvertFrom-Json  # 例外なし=有効 JSON
   Import-Csv "$d/inventory.csv" | %{ ($_.PSObject.Properties|Measure-Object).Count } | Sort-Object -Unique  # 1 値のみ＝列ズレなし
   "inv csv=$((Import-Csv ($d + '/inventory.csv')).Count) / findings inventory=$($j.inventory.Count) / totalResources=$($j.summary.totalResources)"  # 3 者一致が期待（権威件数・省略なし）
-  $ids=@($j.inventory.resourceId); $distinct=@($ids | Sort-Object -Unique).Count; if($ids.Count -ne $distinct -or $distinct -ne [int]$j.summary.totalResources){ "NG: distinct resourceId=$distinct / inventory=$($ids.Count) / totalResources=$($j.summary.totalResources) が不一致" }  # 出力なしが期待（distinct resource IDs = inventory[] = totalResources）
+  # 件数不変条件（1 つの NG 条件で一括検証）: 空白 id=0・case-insensitive distinct・distinctCount・inventory[]・totalResources・inventory.csv 行数が全一致・rawCount>=distinctCount・pending=failed=0
+  $ids=@($j.inventory.resourceId); $ae=$j.metadata.authoritativeEnumeration
+  $blank=@($ids | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count
+  $distinct=@($ids | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique).Count
+  $tr=0L; $trOk=[long]::TryParse([string]$j.summary.totalResources,[ref]$tr); $csv=@(Import-Csv "$d/inventory.csv").Count
+  $pend=@($j.collectionPlan | Where-Object { $_.status -eq 'pending' }).Count; $fail=@($j.collectionPlan | Where-Object { $_.status -eq 'failed' }).Count
+  if($blank -ne 0 -or -not $trOk -or $ids.Count -ne $distinct -or $distinct -ne [int]$ae.distinctCount -or $distinct -ne $j.inventory.Count -or $distinct -ne $tr -or $distinct -ne $csv -or [int]$ae.rawCount -lt [int]$ae.distinctCount -or $pend -ne 0 -or $fail -ne 0){ "NG: 件数不変条件 空白id=$blank distinct=$distinct distinctCount=$($ae.distinctCount) inv=$($j.inventory.Count) total=$($j.summary.totalResources) csv=$csv raw=$($ae.rawCount) pending=$pend failed=$fail" }  # 出力なしが期待（distinct resource IDs = distinctCount = inventory[] = totalResources = inventory.csv、pending=failed=0）
   (Get-ChildItem "$d/findings*.json").Count  # 期待 1（別名なし）
-  ($j.collectionPlan | Where-Object { $_.status -eq 'pending' } | Measure-Object).Count  # 期待 0（収集ゲート G4・pending 残存なし）
-  ($j.collectionPlan | Where-Object { $_.status -eq 'failed' } | Measure-Object).Count  # 期待 0（両経路失敗の権威列挙が残っていない・failed は G1/G4 非合格）
   $enum=@($j.collectionPlan | Where-Object { $_.task -eq 'Inventory:authoritativeResourceEnumeration' })
   if($enum.Count -ne 1){ "NG: 権威列挙タスクがちょうど 1 件でない（$($enum.Count) 件）" }  # 出力なしが期待
   $es=$enum[0].status; $ae=$j.metadata.authoritativeEnumeration; $tr=[int]$j.summary.totalResources
   if($es -notin 'done','empty-verified'){ "NG: 権威列挙 status=$es（done/empty-verified 以外は G1 で停止）" }  # 出力なしが期待
-  if($ae.nextLinkCompleted -ne $true){ "NG: nextLinkCompleted=$($ae.nextLinkCompleted)（最終 nextLink 未完走のまま done/正典にしている）" }  # 出力なしが期待
+  if($ae.nextLinkCompleted -ne $true){ "NG: nextLinkCompleted=$($ae.nextLinkCompleted)（列挙未完走のまま done/正典にしている。CLI 成功時も列挙完了として true、REST は最終 nextLink 到達で true）" }  # 出力なしが期待
   if($es -eq 'done' -and $tr -le 0){ "NG: done なのに totalResources=$tr（done は件数>0 のみ）" }  # 出力なしが期待
   if($es -eq 'empty-verified' -and $tr -ne 0){ "NG: empty-verified なのに totalResources=$tr（empty-verified は件数=0 のみ）" }  # 出力なしが期待
   # done ⟺ 対象配列が非空（相互チェック）。authoritativeResourceEnumeration→inventory / softwareinventories→runtimeInventory / assessments→(securityRecommendations+vulnerabilities) / patchassessmentresources→patchAssessment / CVE:runtimeLookup・CVE:osLookup→公開ソース由来 CVE（findingType=CVE かつ source∈NVD/MITRE/GHSA/DistroSecurityTracker/MSRC・常時タスク・〈参照 J-1〉）
@@ -381,7 +386,7 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
   - `runtime-inventory.csv`: `resourceName, resourceType, component, softwareName, version, vendor, source`。
   - `vulnerabilities.csv`（CVE/EOL/PatchMissing のみ）: `resourceName, resourceType, component, currentVersion, findingType, identifier, severity, remediationRequired, recommendation, referenceUrl, source`。
   - `security-recommendations.csv`: `resourceName, resourceType, category, severity, title, recommendation, referenceUrl, source, assessmentId`（この `category` は Defender の推奨分類・〈参照 C〉）。
-  - `findings.json`: `metadata`（`analysisDateTime` / `analysisScope` / `tenant` / `subscription` / `resourceGroup` / `collectionMethod` / `batchSize` / `batchCount` / `authoritativeEnumeration`）/ `capabilityDetection`（`resourceGraph`/`defenderForCloud`/`defenderSoftwareInventory`/`updateManager`）/ `collectionPlan[]` / `consistencyChecks[]` / `inventory[]` / `runtimeInventory[]` / `vulnerabilities[]` / `patchAssessment[]` / `securityRecommendations[]` / `summary`（totalResources / countByCategory / remediationRequired / severity / eolCount / patchRecommended / securityRecommendationCount）。`summary.totalResources` は **権威列挙の重複排除済み件数**（`az resource list` または ARM REST を完走した distinct id 集合・〈参照 I〉）。**`inventory[]` の各行は先頭に内部照合キー `resourceId`（正典の一意 id）を持つ**（`distinct resourceId 数 = inventory[] = summary.totalResources` の機械検証に使う。CSV/HTML の列には出さない）。`metadata.authoritativeEnumeration` は権威列挙の証跡（`method` / `timeoutSeconds` / `attempts` / `pageCount` / `rawCount` / `distinctCount` / `nextLinkCompleted` / `elapsedSeconds` / `fallbackReason`・〈参照 I-4〉）。`collectionPlan[]` は capability から導出した**必須収集タスクの契約**（task/requiredBy/dueStep/status/evidence・`status`∈`pending`/`done`/`empty-verified`/`downgraded`/`failed`・〈参照 J〉）、`consistencyChecks[]` は capabilityDetection と実収集結果の照合記録。いずれも HTML/CSV には出力しない中間データ。
+  - `findings.json`: `metadata`（`analysisDateTime` / `analysisScope` / `tenant` / `subscription` / `resourceGroup` / `collectionMethod` / `batchSize` / `batchCount` / `authoritativeEnumeration`）/ `capabilityDetection`（`resourceGraph`/`defenderForCloud`/`defenderSoftwareInventory`/`updateManager`）/ `collectionPlan[]` / `consistencyChecks[]` / `inventory[]` / `runtimeInventory[]` / `vulnerabilities[]` / `patchAssessment[]` / `securityRecommendations[]` / `summary`（totalResources / countByCategory / remediationRequired / severity / eolCount / patchRecommended / securityRecommendationCount）。`summary.totalResources` は **権威列挙の重複排除済み件数**（`az resource list` または ARM REST を完走した distinct id 集合・〈参照 I〉）。**`inventory[]` の各行は先頭に内部照合キー `resourceId`（正典の一意 id）を持つ**（`distinct resourceId 数 = inventory[] = summary.totalResources` の機械検証に使う。CSV/HTML の列には出さない）。`metadata.authoritativeEnumeration` は権威列挙の証跡（`method` / `timeoutSeconds` / `overallDeadlineSeconds` / `attempts` / `pageCount` / `rawCount` / `distinctCount` / `nextLinkCompleted`（列挙完走有無・CLI 成功も true）/ `startedAt` / `completedAt` / `elapsedSeconds` / `fallbackReason`・〈参照 I-4〉）。`collectionPlan[]` は capability から導出した**必須収集タスクの契約**（task/requiredBy/dueStep/status/evidence・`status`∈`pending`/`done`/`empty-verified`/`downgraded`/`failed`・〈参照 J〉）、`consistencyChecks[]` は capabilityDetection と実収集結果の照合記録。いずれも HTML/CSV には出力しない中間データ。
 - **区分値（固定）**: `findingType`=`CVE`/`EOL`/`PatchMissing`、`remediationRequired`=`要`/`要確認`/`不要`、`source`=`Defender`/`UpdateManager`/`endoflife.date`/`MicrosoftLifecycle`/`NVD`/`MITRE`/`GHSA`/`DistroSecurityTracker`/`MSRC`、収集能力=`利用可`/`未構成`/`参照不可`。取得できない項目は「取得不可（Reader の範囲外）」と明示。
 - **文字コード（Windows 前提）**: CSV 4 種は **UTF-8 (BOM 付き)**（`create_file` 後に `Set-Content -Encoding utf8BOM` で再保存。先頭 3 バイト=239,187,191。Windows/Excel の文字化け防止）。**HTML / `findings.json` は UTF-8（BOM 不要）**。
 - バージョン・EOL・パッチ状況は取得時点の情報であり「概算 / 目安」と添える。
@@ -487,12 +492,13 @@ Defender for Cloud / Update Manager が未構成のため、一部は Resource G
    - **初回 URL のホストも `az cloud show --query endpoints.resourceManager -o tsv` で解決した現在の ARM endpoint から組み立てる**（`management.azure.com` をハードコードしない。Sovereign Cloud 対応）。パス例 `.../subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/resources?api-version=2021-04-01&$top=200`（**API version `2021-04-01`・ページサイズ `$top=200`**。`$top` の変数展開を避けるため URL は単一引用符で囲む）。応答 `value[]` を蓄積し、応答の **`nextLink` を最終ページまで**辿る。
    - **各 `az rest` ページも高速経路と同じ有界ラッパ**（`Start-Process`＋`WaitForExit`＋`taskkill /PID <id> /T /F`）で実行する（直接 `az rest` を呼ぶと再びハングし得る）。**各ページのハードタイムアウト `min(120 秒, 残り時間)`**、**1 ページあたり最大試行 3 回**（初回＋再試行 2 回）。継続は解決済み `nextLink` を**単一引数として**渡す（連結・評価しない）。
    - **timeout / 接続エラー / HTTP 408 / 429 / 5xx のみ指数バックオフ**（例 2s→4s→8s。`Retry-After` があれば尊重）で再試行し、**それ以外の 4xx は即失敗**。
-   - **`nextLink` は URI を分解して検証**: 絶対 HTTPS・**ホストが上記 ARM endpoint と完全一致**・userinfo を含まない・想定ポート・同一サブスクリプション/RG のリソースパスであること（いずれか外れたら失敗）。
+   - **`nextLink` は URI を分解して検証**: 絶対 HTTPS・**ホストが上記 ARM endpoint と完全一致**・userinfo を含まない・想定ポート・同一サブスクリプション/RG のリソースパスであること（いずれか外れたら失敗）。**不透明な `nextLink`（`&` を含む）は `Start-Process -ArgumentList` の 1 要素として渡せばシェル解釈されず単一引数として保持される**（連結・再評価しない）。
+   - **HTTP ステータス/ヘッダの取得**: `az rest` は 4xx/5xx で非ゼロ終了しエラー本文を stderr に出す。429/5xx 判定と `Retry-After` は当該エラー出力から読み取り、無ければ既定のバックオフにフォールバックする。
    - **同一 `nextLink` が再出現したら循環エラーとして停止**（既訪 URL 集合で検出）。
    - ARM ページングは**アトミックなスナップショットではない**。並行変更下での厳密一致は主張せず、収集の**開始・終了時刻を記録**する。
 3. **正典の確定（重複排除・完走が条件）**: 高速経路成功→その集合、CLI 失敗後に REST が**最終 `nextLink` まで完走**→ REST の集合。いずれも **`id` で重複排除**（**大文字小文字を無視**して一意化。空/欠落 `id` は黙って捨てず失敗として扱う）した集合を正典とし件数を `summary.totalResources` に設定する。**最終 `nextLink` 取得前のデータを `done`／正典にしない**。REST が全ページ取得できれば CLI 失敗後も処理を継続できる。**正典が返した ID は子リソースを含め 1 件 1 行**として `inventory[]` に登録する（正典応答に**現れない**子/プロキシのみ件数対象外）。
 4. **両経路とも失敗**: 部分データを破棄し、`collectionPlan[]` の `Inventory:authoritativeResourceEnumeration` を **`failed`** にして **G1 を通過させず**、レポート生成前に停止する（**不完全なレポートを生成しない**）。
-5. **証跡（`metadata.authoritativeEnumeration` と当該タスクの `evidence`）**: **取得方式**（`az resource list` / `ARM REST`）・**タイムアウト値**・**試行回数**・**ページ数**・**重複排除前後の件数**（rawCount / distinctCount・いずれも JSON 数値）・**`nextLink` 完走有無**・**所要時間**・**フォールバック理由**を記録する。
+5. **証跡（`metadata.authoritativeEnumeration` と当該タスクの `evidence`）**: **取得方式**（`method`＝`az resource list` / `ARM REST`）・**タイムアウト値**（`timeoutSeconds`＝各ページ 120／`overallDeadlineSeconds`＝全体 900 等）・**試行回数**（`attempts`）・**ページ数**（`pageCount`）・**重複排除前後の件数**（`rawCount` / `distinctCount`・いずれも JSON 数値・`rawCount >= distinctCount`）・**列挙完走有無**（`nextLinkCompleted`。**CLI 高速経路の正常終了も列挙完了として `true`**、REST は最終 `nextLink` 到達で `true`）・**開始/終了時刻と所要時間**（`startedAt` / `completedAt` / `elapsedSeconds`）・**フォールバック理由**（`fallbackReason`）を記録する。
 6. **0 件の扱い**: **RG 存在確認（`az group show -n <RESOURCE_GROUP> --subscription <SUBSCRIPTION_ID>`）とページング完走**の両方を確認できた場合のみ `empty-verified`（`inventory[]`=0・存在する空 RG）。確認できなければ `failed`（存在しない RG／未完走と区別）。**`done` は件数 > 0 のときのみ**、**`empty-verified` は件数 = 0 のときのみ**とする。
 7. **正典確定後**に、100 件超の詳細照会バッチ（手順 3-1 のバッチ分割）を**正典の `id` 集合に対して**適用する（バッチは詳細照会の単位で、件数の正典は権威列挙全体）。
 
