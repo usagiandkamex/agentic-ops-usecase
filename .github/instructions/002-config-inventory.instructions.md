@@ -13,7 +13,7 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 - **流れ**: ① スコープ確認 → ② 収集能力の判別 →〈実行前の最終確認（承認）〉→ ③ 棚卸収集 → ④ 脆弱性照合 → ⑤ パッチ判定 → ⑥ レポート生成（検証ゲート）→ ⑦ 最終レビュー。
 - **中核成果物**: `findings.json`（単一のデータ源。③で作り始め④〜⑥で追記・確定）→ HTML 3 ページ（index / inventory / remediation）＋CSV 4 種を生成。
 - **収集し損ねを防ぐ切れ目ゲート**: ②で `利用可` の経路から必須収集タスクを `collectionPlan[]` に materialize し、各手順の切れ目（②→③→④→⑤→⑥）で証跡付きに消化されるまで先へ進めない（〈参照 J〉）。
-- **安全な並列化で短縮（READ 専用・判定精度・出力構造は不変）**: 「直列の確定 → 並列の収集ウェーブ → 直列のマージ・書き込み」。手順 3-1 の `az resource list`（件数正典）確定までは直列、確定後は独立 4 トラック（A:MDVM / B:Defender / C:Update Manager / D:VM/PaaS 詳細）を並列（Azure 詳細は `ForEach-Object -Parallel -ThrottleLimit 5`）。公開 CVE/EOL は製品×版数で一意化して最大 4 並列バッチ＋fetch 台帳で重複取得を禁止。**書き込みは親 Agent が直列**に決定論マージ（並列競合・重複所見なし）。429/API 制限は指数バックオフ、各タスクの `durationSec`/`retryCount` 等を evidence と `progress.md` に記録（詳細はエージェント定義〈参照 E〉）。
+- **安全な並列化で短縮（READ 専用・判定精度・出力構造は不変）**: 「直列の確定 → 並列の収集ウェーブ → 直列のマージ・書き込み」。手順 3-1 の `az resource list`（件数正典）確定までは直列、確定後は独立 4 トラック（A:MDVM / B:Defender / C:Update Manager / D:VM/PaaS 詳細）を並列（Azure 詳細は `ForEach-Object -Parallel -ThrottleLimit 5`）。公開 CVE/EOL は製品×版数で一意化して**ソース別並列予算（〈参照 M〉。NVD 無キー=4／APIキー有り=8–10、他ソースは各 6–8。多様な componentType では実効 6–8 並列。429 を受けたソースは予算を一時半減）**＋fetch 台帳で重複取得を禁止。**書き込みは親 Agent が直列**に決定論マージ（並列競合・重複所見なし）。429/API 制限は指数バックオフ、各タスクの `durationSec`/`retryCount` 等を evidence と `progress.md` に記録（詳細はエージェント定義〈参照 E〉）。
 - **進捗トラッキング `progress.md`**: **起動直後（①スコープ確認より前）**に `report-template/progress.md` を `read_file` で読み `create_file` で作成し（保存先フォルダもここで確定）、各手順の切れ目で `replace_string_in_file` により更新・自己検査してワークフロー遵守（手順スキップ・テンプレ改変・スクリプト生成の防止）を可視化する。**〈実行前の最終確認〉承認は停止点ではなく、承認後は同一ターンで③以降を継続**する（〈参照 K〉）。
 - **確認は原則 1 回**（実行前の最終確認）。承認後は自律実行。**全工程 READ 専用**。
 
@@ -57,7 +57,7 @@ applyTo: 'usecases/002-config-inventory-vulnerability/**'
 
 ## 判定（脆弱性 / パッチ）
 
-- **脆弱性照合**: Defender（有効時）の相関 CVE、EOL は endoflife.date（主）/ Microsoft Lifecycle（補助）を Web の GET で参照。是正要否は `要` / `要確認` / `不要` で表し、各判定に**根拠**（CVE ID / EOL 日付 / 参照 URL / 情報源）を付ける（推測 URL は使わない）。決定論の判定基準はエージェント定義〈参照 B〉に従う。**加えて、`runtimeInventory[]` の全成分（製品×版数で重複排除）と現行 OS 版数を、公開 CVE ソース（NVD / ディストリ・ベンダのセキュリティトラッカー / MITRE / GHSA）で照合し Critical/High を `vulnerabilities[]`（CVE）に追加**する（`source` にソース名。該当版数が影響を受ける CVE のみ・推測 CVE を作らない）。**公開 CVE/EOL 照合は製品×版数で一意化して最大 4 並列バッチ（または CVE ルックアップ・ワーカー `azure-cve-lookup-worker` を最大 4 並列）で fetch し、fetch 台帳で同一 製品×版数×URL の重複取得を禁止**、429/API 制限は指数バックオフ再試行、結果は親 Agent が `(resourceId, findingType, identifier)` キーで決定論マージする（〈参照 E〉/〈参照 L〉）。
+- **脆弱性照合**: Defender（有効時）の相関 CVE、EOL は endoflife.date（主）/ Microsoft Lifecycle（補助）を Web の GET で参照。是正要否は `要` / `要確認` / `不要` で表し、各判定に**根拠**（CVE ID / EOL 日付 / 参照 URL / 情報源）を付ける（推測 URL は使わない）。決定論の判定基準はエージェント定義〈参照 B〉に従う。**加えて、`runtimeInventory[]` の全成分（製品×版数で重複排除）と現行 OS 版数を、公開 CVE ソース（NVD / ディストリ・ベンダのセキュリティトラッカー / MITRE / GHSA）で照合し Critical/High を `vulnerabilities[]`（CVE）に追加**する（`source` にソース名。該当版数が影響を受ける CVE のみ・推測 CVE を作らない）。**公開 CVE/EOL 照合は製品×版数で一意化してソース別並列予算（〈参照 M〉。NVD 無キー=4／APIキー有り=8–10、他ソースは各 6–8。実効 6–8 並列。429 を受けたソースは予算を一時半減）で fetch（または CVE ルックアップ・ワーカー `azure-cve-lookup-worker` を同予算で並列に）し、fetch 台帳で同一 製品×版数×URL の重複取得を禁止**、429/API 制限は指数バックオフ再試行、結果は親 Agent が `(resourceId, findingType, identifier)` キーで決定論マージする（〈参照 E〉/〈参照 L〉/〈参照 M〉）。
 - **脆弱性と構成推奨の分離**: `vulnerabilities`（findingType=CVE/EOL/PatchMissing）と `securityRecommendations`（Defender の構成系推奨：マネージド ID 未使用・診断ログ・publicNetworkAccess・TLS 等）を別ファイルに分ける。構成系を CVE と誤ラベルしない。
 - **パッチ適用可否**: Update Manager の既存結果を READ 参照し「適用推奨／適用検討／情報なし」を根拠件数とともに判定。適用は実行せず提示に留める。
 
