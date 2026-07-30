@@ -362,12 +362,12 @@ description: 'Azure の利用者責任リソース（VM/VMSS・PaaS ランタイ
 - **`不要`** = 版数がサポート内で (a)(b)(c) のいずれにも該当しない場合。
 - **情報源の値をそのまま採用**（深刻度・CVE ID・EOL 日付・パッチ件数を推測で補完・格上げしない。深刻度ラベルは Critical/High/Medium/Low をそのまま）。
 - **重複排除（必須）と配列ごとの安定キー**: 同一 CVE × 同一リソースは 1 件に統合。複数経路で出た同一是正内容も 1 件に統合。**並列（収集ウェーブ・CVE のソース別並列予算〈参照 M〉・CVE ルックアップ・ワーカー）で得た結果は、親 Agent が配列ごとの安定キーで重複排除して安定順に決定論マージ**する（トラック/バッチ/ワーカーの完了順に依存せず、同じ入力なら常に同じ順序・件数になる）。**安定キー（配列別・混同しない）**:
-  - `vulnerabilities[]` = `resourceId + findingType + identifier`（**`findingType=EOL` は `identifier` に製品を一意に含む正準値（`<製品>@<版数>`＋EOL 日付。例 `openssl@1.1.1w EOL:2023-09-11`）を用い、安定キーを `resourceId + findingType + component + currentVersion + identifier` として、同一リソース上の別製品・別コンポーネントを（同一 EOL 日付でも）畳み込まない**）
+  - `vulnerabilities[]` = `resourceId + findingType + component + currentVersion + identifier`（CVE は `component`/`currentVersion` が無ければ空文字として `identifier` で一意化。**`findingType=EOL` は `identifier` に製品を一意に含む正準値（`<製品>@<版数>`＋EOL 日付。例 `openssl@1.1.1w EOL:2023-09-11`）を用い、`component`/`currentVersion` と併せて同一リソース上の別製品・別コンポーネントを（同一 EOL 日付でも）畳み込まない**）
   - `runtimeInventory[]` = `resourceId + component + softwareName + version`
   - `securityRecommendations[]` = `resourceId + assessmentId`（無ければ `resourceId + title`）
   - `patchAssessment[]` = `resourceId`
   - `inventory[]` = `resourceId`
-  - **同一キーで内容が異なる場合の決定論タイブレーク**: `severity` の高い方（Critical>High>Medium>Low>**null（最下位）**）を優先し、同値ならソース優先順位（`NVD`>`DistroSecurityTracker`>`MSRC`>`MITRE`>`GHSA`>`endoflife.date`>`MicrosoftLifecycle`>`AzureRetirement`）、なお同順なら `referenceUrl` の字句昇順で勝者を決める（完了順に依存しない）。
+  - **同一キーで内容が異なる場合の決定論タイブレーク**: `severity` の高い方（Critical>High>Medium>Low>**null（最下位）**）を優先し、同値ならソース優先順位（`NVD`>`DistroSecurityTracker`>`MSRC`>`MITRE`>`GHSA`>`endoflife.date`>`AzureRetirement`>`MicrosoftLifecycle`）、なお同順なら `referenceUrl` の字句昇順で勝者を決める（完了順に依存しない）。
 - **同一スナップショットで判定**: Defender/Update Manager の再評価・再スキャン待ちをしない（結果が揃うのを待って件数を変えない）。取得タイミングの差は `metadata` に「収集時点」を明記。
 - **サマリ件数の定義（固定）**: `remediationRequired` = `要` の所見を 1 件以上持つ**リソース数（重複排除後）**。`severity` 別件数は `vulnerabilities[]` の**所見単位**（重複排除後）。`eolCount` = EOL 到達（`要`）のリソース数。
 - **`inventory[].issue` の確定（手順 6-1）**: 上記判定を各リソースへ集約し、`要対応`（`要` の所見が 1 件以上）/ `要判断`（`要` は無いが `要確認` あり）/ `なし`（すべて `不要`）を設定する。
