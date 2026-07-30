@@ -15,6 +15,14 @@
         "server",
         "start"
       ]
+    },
+    // Microsoft Release Communications (MRC) MCP Server: used by usecase 002
+    // to query Azure Updates / service retirements (EOL) for managed services.
+    // Remote streamable HTTP transport, no authentication required.
+    // Docs: https://learn.microsoft.com/microsoft-365/admin/manage/mrc-mcp
+    "Microsoft Release Communications": {
+      "type": "http",
+      "url": "https://www.microsoft.com/releasecommunications/mcp"
     }
   }
 }
