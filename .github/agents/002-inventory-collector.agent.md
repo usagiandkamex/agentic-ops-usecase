@@ -53,7 +53,7 @@ agents: [azure-cve-lookup-worker]
 
 - `findings.json` は**内容を自分で組み立て**、`create_file`（新規 1 回）と `replace_string_in_file`（追記・更新）で直接書き出す。
 - **Python / PowerShell 等で findings.json を生成・整形する補助スクリプト（`.py`/`.ps1`/`.sh`/`.bat`/`.cmd`/`.js`）を、リポジトリにも一時フォルダにも作らない**。リソースが多くても直接組み立て（多いときは編集ツールで配列に追記して分割投入）。
-- 端末（`run_in_terminal`）は **Azure への READ 照会**・**権威列挙の有界実行**（〈参照 I-4〉のインライン端末操作。一時ファイル出力とプロセスツリー終了は許可・Azure は READ のまま）にのみ使う。
+- 端末（`run_in_terminal`）は **Azure への READ 照会**と、**権威列挙（`az resource list ... -o json` の直接実行・必要ならパイプで受ける）**にのみ使う（Process/ジョブ/タイムアウト付きラッパー・`taskkill`・stdout リダイレクト・`az rest`/ARM SDK/`nextLink` ループ等の代替経路は新設しない）。
 - **`findings.json` は 1 つだけ**。別名（`findings-new.json` / `findings-updated.json` 等）を作らない。
 - **並列時の書き込み直列化**: 並列に走るのは fetch（READ 照会）のみ。`findings.json` / `progress.md` への追記は**あなた（親側の直列書き込み役）が直列**に行い、複数 worker から同一ファイルを同時に書かない。並列結果は**配列ごとの安定キー（〈参照 B〉）で重複排除して安定順に決定論マージ**してから 1 回で書き込む。
 
