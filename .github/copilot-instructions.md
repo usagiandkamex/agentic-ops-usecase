@@ -35,7 +35,7 @@ applyTo: '**'
 
 ## 共通指針と個別仕様の分離（徹底）
 
-- 本ファイル（`copilot-instructions.md`）には **全ユースケース共通の指針のみ** を記述する。
+- 本ファイル（`.github/copilot-instructions.md`）には **全ユースケース共通の指針のみ** を記述する。
 - **特定ユースケースにのみ適用される仕様**（レポート出力先・テンプレート・成果物の作り方など）は
   本ファイルに書かず、該当ユースケースの
   `.github/instructions/<NNN>-*.instructions.md`（`applyTo` で対象パスを限定）に記述する。
