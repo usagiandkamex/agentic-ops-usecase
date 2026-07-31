@@ -33,11 +33,14 @@ applyTo: '**'
 - `usecases/<name>/` : ユースケース単位。`agents/`（チャットモード）、
   `prompts/`（プロンプト）、`instructions/`（インストラクション）を含む。
 
-## レポート出力の固定仕様（ユースケース 001）
+## 共通指針と個別仕様の分離（徹底）
 
-- 出力先は `usecases/001-azure-resource-analysis/reports/<YYYYMMDD-HHmmss>/`。
-- 構成は `index.html` ＋ 各ピラー（`reliability/security/cost/opex/performance.html`）＋ `architecture.html`。
-- レポートは `report-template/*.html` を **読み込んで複製し `{{TOKEN}}` を置換**して作る。HTML を自作・スクリプト生成しない（`Copy-Item` 等のシェルコピーで作らず、置換後の完成 HTML を書き出す）。
+- 本ファイル（`.github/copilot-instructions.md`）には **全ユースケース共通の指針のみ** を記述する。
+- **特定ユースケースにのみ適用される仕様**（レポート出力先・テンプレート・成果物の作り方など）は
+  本ファイルに書かず、該当ユースケースの
+  `.github/instructions/<NNN>-*.instructions.md`（`applyTo` で対象パスを限定）に記述する。
+  - 例: ユースケース 001 のレポート出力仕様は
+    [.github/instructions/001-azure-ops.instructions.md](instructions/001-azure-ops.instructions.md) を参照。
 
 ## 執筆スタイル
 
