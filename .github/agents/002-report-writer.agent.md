@@ -70,6 +70,7 @@ user-invocable: false
    **件数が多くても省略・要約しない**。`inventory[]` が 57 件なら 57 行すべてを出力する。**「（その他 N リソース）」のような集約行を作らない**。
    **テンプレートの見出し・列・構造は改変しない**（独自の見出しや列で HTML を書き起こさない。`{{TOKEN}}` 置換と BEGIN/END 区域の行複製だけで作る）。
    **各テーブルの `<thead>` のヘッダ行（列ラベル・列数・列順）はテンプレートと一字一句同一にする**。**列を追加・削除・改名しない**（棚卸表に「位置」列を新設したり「ランタイム」「収集ソース」列を削除するのは重大違反）。**課題ピルのクラスは `issue-yes`（要対応）/ `issue-check`（要判断）/ `issue-no`（なし）のいずれかだけ**を使う（`issue-要対応` 等のラベル直書きクラスにしない＝CSS が効かない）。
+   **深刻度ピル（remediation.html の REMEDIATION_ROWS・index.html の TOP_REMEDIATION_ROWS）は各行の `{{SEVERITY}}` を `vulnerabilities[].severity` から必ず埋め、`Critical` / `High` / `Medium` / `Low` に正規化（先頭大文字）する**。**空の `sev-`（`<span class="pill sev-"></span>`）を残さない**（全 `vulnerabilities[]` 要素は collector が〈参照 B〉で `severity` を確定済み＝EOL/PatchMissing/CVSS 欠落時も付与され、`null`/空は来ない）。
    **テンプレートの `<h2>` セクションを 1 つも削除しない**。**各セクション直前の `<!-- SECTION: x -->` アンカーを出力に残す**（削除・改名しない・検証(15)）。
    **`<style>` ブロック・`<header>` の `<span class="crumb">`・`<footer>` を含む全構造をそのまま保持し、削除・簡略化しない**（検証(12)）。
 4. **テンプレート先頭のコメントブロック（`<!--` 〜 `-->`）を削除**する。
@@ -93,6 +94,7 @@ user-invocable: false
 - (16) **列定義の固定（`<thead>` 一致）**: 各 HTML の各テーブルの `<thead>` ヘッダ行がテンプレートと**一字一句一致**する。
 - (17) **課題ピルのクラス**: inventory.html の課題ピルの class が `issue-yes` / `issue-check` / `issue-no` のいずれかだけ。
 - (18) **一時ファイルなし**: レポートフォルダに `temp-*.*` や `findings-*.json`（別名）が 0 件で、成果物が HTML 3 / CSV 4 / `findings.json` / `progress.md` のみ。
+- (19) **深刻度ピルの非空・妥当（空 `sev-` 防止）**: index.html / remediation.html に空・不正な深刻度ピル（`sev-` が `Critical`/`High`/`Medium`/`Low` 以外＝空 `class="pill sev-"` や小文字 `sev-high` 等・**大文字小文字を区別して検査**）が **0 件**。全 `vulnerabilities[]` 要素は collector が `severity` を確定済み（CVE=CVSS Critical/High、EOL=決定論 High/Medium、PatchMissing=決定論 High/Medium/Low・〈参照 B〉）で、先頭大文字に正規化して必ず埋まっている（`{{SEVERITY}}` 置換漏れ・空/`null`・正規化漏れの検知）。
 
   ```powershell
   $d='usecases/002-config-inventory-vulnerability/reports/<YYYYMMDD-HHmmss>'
@@ -136,6 +138,7 @@ user-invocable: false
   $tpl='usecases/002-config-inventory-vulnerability/report-template'; foreach($f in 'index.html','inventory.html','remediation.html'){ $a=([regex]::Matches((Get-Content -Raw "$tpl/$f"),'<thead><tr>.*?</tr></thead>').Value) -join ''; $b=([regex]::Matches((Get-Content -Raw "$d/$f"),'<thead><tr>.*?</tr></thead>').Value) -join ''; if($a -ne $b){ "NG: $f の <thead> がテンプレと不一致" } }  # 出力なしが期待（(16)）
   (Select-String -Path "$d/inventory.html" -Pattern 'issue-(?!(?:yes|check|no)\b)' -AllMatches | Measure-Object).Count  # 期待 0（(17) 不正な issue クラスなし）
   (Get-ChildItem "$d/temp-*","$d/findings-*.json" -ErrorAction SilentlyContinue | Measure-Object).Count  # 期待 0（(18) 一時/別名ファイルなし）
+  (Select-String -CaseSensitive -Path "$d/index.html","$d/remediation.html" -Pattern 'sev-(?!(?:Critical|High|Medium|Low)\b)' -AllMatches | Measure-Object).Count  # 期待 0（(19) 空/不正/小文字の深刻度ピルなし・大文字小文字を区別）
   "progress.md exists=$(Test-Path ($d + '/progress.md')) / 未チェック=$((Select-String -Path ($d + '/progress.md') -Pattern '\[ \]' -AllMatches | Measure-Object).Count)"  # exists=True / 未チェック=0 期待（(14)）
   $j.collectionPlan | Select-Object task,status,evidence | Format-Table -Auto  # 全タスク terminal＋証跡付きを目視
   ```
@@ -184,7 +187,7 @@ user-invocable: false
 2. **網羅・全件表示・件数固定チェック**: 対象 RG 内の**全リソース**が `inventory[]` に列挙され、**`inventory[]` 件数が `summary.totalResources`（＝権威列挙の重複排除済み件数）と一致**するか。**`inventory[]` の全件が inventory.html に 1 行ずつ表示され、「その他 N リソース」のような集約行で省略していないか**（HTML の行数と `inventory[]` の件数が一致するか）。
 3. **根拠・分類チェック**: `vulnerabilities` の各是正要否に根拠（CVE ID / EOL 日付 / 参照 URL / 情報源）があるか。**構成系推奨を vulnerabilities に混入させていないか**（`securityRecommendations` 側）。URL は実在する公式ページか。
 4. **整合チェック**: `index.html` のサマリ件数が CSV / `findings.json` と一致するか。`findingType` / `remediationRequired` / `source` が定義どおりか。CSV のヘッダ・列順が定義どおりか。
-5. **テンプレート準拠・文字コードチェック**: 全 HTML/CSV/JSON が `report-template/*` を read_file→置換→create_file で生成したもので、`{{TOKEN}}` / `<!-- BEGIN/END -->` / 先頭コメントが 0 件か（手順 6-3 の検証ゲートに合格したか）。**テンプレートの見出し・列・構造を改変していないか。`<footer>` / `<span class="crumb">` / `<style>` を削除・簡略化していないか（検証(12)）。各 HTML の `<h2>` セクションが全て残り、必須 `<!-- SECTION: x -->` アンカーが欠落していないか（検証(15)）。各テーブルの `<thead>` 列がテンプレートと一致し、列の新設・削除・改名がないか（検証(16)）。課題ピルのクラスが `issue-yes`/`issue-check`/`issue-no` のみか（検証(17)）。レポートフォルダに `temp-*.*` や別名 findings が残っていないか（検証(18)）。** HTML タブ相互リンクが機能し、CSV は各行の列数がヘッダと一致（カンマ含みは二重引用符囲み・列ズレなし）し **UTF-8 (BOM 付き)** か。`findings.json` が有効な JSON か。
+5. **テンプレート準拠・文字コードチェック**: 全 HTML/CSV/JSON が `report-template/*` を read_file→置換→create_file で生成したもので、`{{TOKEN}}` / `<!-- BEGIN/END -->` / 先頭コメントが 0 件か（手順 6-3 の検証ゲートに合格したか）。**テンプレートの見出し・列・構造を改変していないか。`<footer>` / `<span class="crumb">` / `<style>` を削除・簡略化していないか（検証(12)）。各 HTML の `<h2>` セクションが全て残り、必須 `<!-- SECTION: x -->` アンカーが欠落していないか（検証(15)）。各テーブルの `<thead>` 列がテンプレートと一致し、列の新設・削除・改名がないか（検証(16)）。課題ピルのクラスが `issue-yes`/`issue-check`/`issue-no` のみか（検証(17)）。レポートフォルダに `temp-*.*` や別名 findings が残っていないか（検証(18)）。深刻度ピルが空 `sev-` を含まず `sev-Critical`/`sev-High`/`sev-Medium`/`sev-Low` のみか（検証(19)）。** HTML タブ相互リンクが機能し、CSV は各行の列数がヘッダと一致（カンマ含みは二重引用符囲み・列ズレなし）し **UTF-8 (BOM 付き)** か。`findings.json` が有効な JSON か。
 6. **フォールバック整合・整合性チェック**: 収集能力の判別結果（Defender / Update Manager の有無）と、実際に用いた情報源・限界の記述が一致するか。**利用可なのに空になっていないか**（`consistencyChecks[]` に降格/0 件確定の理由が記録され矛盾が無いか）。**収集タスク契約 `collectionPlan[]` に `pending` が残っていないか（全タスク terminal＋証跡付き・収集ゲート G4 に合格したか）**。**公開 CVE 照合（`CVE:runtimeLookup` / `CVE:osLookup`）・EOL 横断照合（`EOL:lookup` / `EOL:azureService`）が反映され件数照合が合致するか。** これらは collector の成果物であり、不備があれば親へ差し戻す。
 7. **機密チェック**: シークレット / パスワード / 接続文字列 / 個人のメール等を含めていないか（実値でも記載しない）。
 8. **保存チェック**: 保存先が `reports/<YYYYMMDD-HHmmss>/`（JST 命名）で、HTML 3 ページ・CSV 4 種・`findings.json` が揃い、既存フォルダを上書きしていないか。**`progress.md` が存在し、手順 1〜7・ゲート G0〜G4・テンプレ準拠チェックが全て完了マークか（検証(14)）。**
