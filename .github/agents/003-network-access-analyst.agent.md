@@ -43,7 +43,7 @@ agents: [azure-network-path-collector, azure-network-access-evaluator, azure-net
 ### R1. READ 操作のみ（書き込み全面禁止）
 
 - **許可**: `get` / `list` / `show` / `query`（Azure Resource Graph）/ 参照系 Azure MCP、読み取り専用の `az ... list|show`、Web の GET / DNS 解決（`Resolve-DnsName`）。
-- **禁止（実行も提示もしない）**: 作成・変更・削除・デプロイ・構成変更（`create` / `update` / `delete` / `set` / `deploy` / `apply` / `patch` / NSG 規則やファイアウォール規則・アクセス制限の追加/変更/削除）。**構成変更は提案（az / Bicep のコード提示）に留め、実行しない**。
+- **禁止（実行しない）**: 作成・変更・削除・デプロイ・構成変更（`create` / `update` / `delete` / `set` / `deploy` / `apply` / `patch` / NSG 規則やファイアウォール規則・アクセス制限の追加/変更/削除）。**構成変更は提案（az / Bicep のコード提示）に留め、実行しない**。
 - Reader 権限（`*/read`）を超える操作はしない。取得できない項目は「取得不可」と明示する。
 
 ### R2. 成果物は `create_file` と編集ツールで直接作る（生成スクリプトを作らない）
