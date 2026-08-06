@@ -20,6 +20,22 @@ applyTo: 'usecases/001-azure-resource-analysis/**'
 - Azure MCP が使えない場合は **Azure CLI (`az`)** の同等コマンドを代替として提示する。
 - 取得は照会系（list / show / query）に限定し、**書き込み・変更・削除は行わない**。
 
+## マルチエージェント実行と所有権
+
+- 利用者向け入口は `azure-resource-analyst` とし、同エージェントを **Orchestrator** として動かす。
+- Orchestrator は承認後、共通 Collector → 選択された WAF Specialist → Report Writer の順で制御する。
+- 共通 Collector は単一 `findings.json` の共通リソースとトポロジだけを作る。柱評価や HTML は作らない。
+- 選択された WAF Specialist は **同一 fan-out フェーズで並列起動**する。複数柱を 1 柱ずつ完了待ちする逐次実行へ変更しない。
+- 各 Specialist は `reports/<YYYYMMDD-HHmmss>/.work/<pillar>.json` の専有ファイルだけを作成する。最終 `findings.json`、`progress.md`、他柱の中間ファイルを変更しない。
+- 各 Specialist は Azure READ 結果をツール返却から直接評価し、stdout リダイレクトや `_tmp*` / `temp-*` / 補助 JSON を作らない。`.work/` 内でも指定された正確な `<pillar>.json` 以外のファイル作成を禁止する。
+- `progress.md` と最終 `findings.json` の統合は Orchestrator だけが直列に行う。並列 worker から共有ファイルへ同時書き込みしない。
+- fan-in は完了順に依存させず、Reliability → Security → Cost Optimization → Operational Excellence → Performance Efficiency の順で決定論的に統合する。
+- 不合格の柱だけを最大 2 回再委譲する。複数柱が不合格ならその柱だけを再び並列起動し、合格済みの柱を再実行しない。
+- 全選択柱の統合ゲート合格後に `.work/` を削除し、最終成果物に中間 JSON・別名 findings・一時ファイルを残さない。
+- Report Writer は統合・要約済み `findings.json` を読み取り専用で描画し、柱評価や準拠率を再判定しない。
+- サブエージェントの返却は親 Orchestrator の中間結果であり、返却直後に親ターンを終了しない。Collector → Specialist 並列 wave → fan-in → Writer → 完了報告を、ハードブロッカーがない限り同一親ターン内で連続実行する。
+- 「次に実行する」と予定だけを返して停止せず、各返却の検証後に次の agent tool call を直ちに発行する。
+
 ## 成果物の作り方（生成スクリプトを作らない）
 
 - **`findings.json` / HTML は、内容をエージェント自身が組み立て、`create_file`（新規）と編集ツール
@@ -27,9 +43,10 @@ applyTo: 'usecases/001-azure-resource-analysis/**'
 - **Python / PowerShell 等で「ファイルを生成・組み立てる補助スクリプト」を書いたり実行したりしない**
   （`.py` / `.ps1` / `.sh` / `.bat` / `.cmd` / `.js` 等のスクリプトファイルを **リポジトリにも一時フォルダにも作らない**）。
 - **`Copy-Item` 等のシェルのファイルコピーでテンプレートを複写して出力を作らない**（トークンが未置換のまま残るため）。
-- **端末（`run_in_terminal`）は次の 3 用途にのみ使う**: ① Azure への **READ 照会**、
+- **端末（`run_in_terminal`）は次の 4 用途にのみ使う**: ① Azure への **READ 照会**、
   ② 保存フォルダ名の **JST 時刻取得**（`[DateTime]::UtcNow.AddHours(9).ToString('yyyyMMdd-HHmmss')`）、
   ③ **認証・対象コンテキストの確認/設定**（`az account show` / `az login` / `az account set` / 対話回避の `az config set core.login_experience_v2=off` ― ローカル CLI 設定のみで Azure への書き込みではない）。
+  ④ 生成済み JSON / HTML / ファイル構成の **読み取り専用検証**。データ整形・成果物生成には使わない。
 - **大量データでも直接組み立てて書き出す**（「量が多いから」を理由にスクリプト生成へ切り替えない。分割が必要なら編集ツールで追記する）。
 
 ## 対象スコープの選定
