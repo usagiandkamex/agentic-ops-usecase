@@ -1,0 +1,2 @@
+layer,ruleName,priority,direction,access,protocol,sourceOrDestination,portRange,matched,layerDecision
+{{RULE_ROWS}}

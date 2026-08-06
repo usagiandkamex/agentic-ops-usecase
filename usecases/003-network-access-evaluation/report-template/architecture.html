@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<!--
+  architecture.html テンプレート（ユースケース 003）— 送信元（IP/URL）→ 経路上で実際に通過する制御レイヤ → 対象リソース、の経路図（ホップ図）。
+  重要（経路図の方針）: 図（.flow）には「送信元から対象までの間で実際に通過するホップのみ」を残す。すなわち 送信元ノード（dec-Node）＋ applicable かつ decision が Allow/Deny のレイヤ（dec-Allow/dec-Deny）＋ 対象ノード（dec-Node）だけを HOP_ITEMS に出す。
+  適用外（applicable=false または decision=NA）のレイヤは図に描かず、下の「経路上に存在しない制御」セクション（NOT_ON_PATH_ITEMS）に文章で理由を記載する。
+  区域: HOP_ITEMS（通過ホップを順に複製: ラベル / 種別 / 判定。dec-Allow|dec-Deny|dec-Node のみ・dec-NA は出さない）／ NOT_ON_PATH_ITEMS（経路上に存在しない制御を文章で列挙: レイヤ名 / 理由）。
+  空セクションの扱い（重要）: HOP_ITEMS が 0 件になることは無い（最低でも送信元・対象の 2 ノード）。NOT_ON_PATH_ITEMS が 0 件（すべての制御が経路上に存在）なら、下記フォールバック行を 1 行だけ出す: <li class="empty">該当なし（すべての制御レイヤが経路上に存在します）。</li>
+  このテンプレは参照元。read_file で読み置換・ホップ複製だけで完成させ create_file で 1 回書き出す（複製→編集しない・生成スクリプト不要）。<style>・<span class="crumb">・<footer> を削除・簡略化しない。
+  <!-- SECTION: name --> アンカーは必須マーカー（path-diagram / not-on-path）。削除・改名しない（検証ゲートが残存を機械チェックする）。
+  出力に {{...}} や BEGIN/END マーカー、この先頭コメントを残さないこと。
+  トークン: DIRECTION / OVERALL_DECISION / SOURCE_LABEL / TARGET_LABEL
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>経路図 — ネットワークアクセス可否評価レポート</title>
+<style>
+  :root{--blue:#0078D4;--dark:#243A5E;--bg:#faf9f8;--card:#fff;--bd:#edebe9;--tx:#201f1e;--sub:#605e5c;--good:#107C10;--warn:#F7A600;--bad:#D13438;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","Yu Gothic UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);font-size:14px;line-height:1.5}
+  header.topbar{background:linear-gradient(90deg,var(--dark),var(--blue));color:#fff;padding:14px 28px;display:flex;align-items:center;gap:12px}
+  header.topbar h1{font-size:18px;font-weight:600;margin:0}
+  header.topbar .crumb{margin-left:auto;font-size:12px;opacity:.9}
+  main{max-width:1120px;margin:0 auto;padding:24px 28px 48px}
+  nav.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px}
+  nav.tabs a{padding:8px 14px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--blue);text-decoration:none;font-weight:600;font-size:13px}
+  nav.tabs a.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+  h2{font-size:16px;font-weight:600;margin:28px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:12px 0}
+  .hop{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:12px 16px;min-width:150px;max-width:220px;position:relative}
+  .hop .lbl{font-weight:700;font-size:13px}
+  .hop .typ{font-size:11px;color:var(--sub);margin-top:2px}
+  .hop .dec{display:inline-block;margin-top:8px;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#fff}
+  .hop.dec-Allow{border-left:5px solid var(--good)}.hop.dec-Allow .dec{background:var(--good)}
+  .hop.dec-Deny{border-left:5px solid var(--bad)}.hop.dec-Deny .dec{background:var(--bad)}
+  .hop.dec-NA{border-left:5px solid var(--sub)}.hop.dec-NA .dec{background:var(--sub)}
+  .hop.dec-Node{border-left:5px solid var(--dark)}.hop.dec-Node .dec{background:var(--dark)}
+  .arrow{display:flex;align-items:center;padding:0 6px;color:var(--sub);font-size:22px;font-weight:700}
+  .legend{font-size:12px;color:var(--sub);margin:8px 0 16px}
+  .legend span{display:inline-block;margin-right:14px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  a{color:var(--blue)}
+  .note{color:var(--sub);font-size:12px;margin:4px 0 16px}
+  ul.nalist{margin:6px 0 16px;padding-left:20px}
+  ul.nalist li{margin:3px 0;font-size:13px}
+  ul.nalist li.empty{list-style:none;margin-left:-20px;color:var(--sub);font-style:italic}
+  footer{color:var(--sub);font-size:12px;margin-top:32px;border-top:1px solid var(--bd);padding-top:12px}
+</style>
+</head>
+<body>
+<header class="topbar"><h1>ネットワークアクセス可否評価レポート</h1><span class="crumb">READ 専用 / Reader 権限</span></header>
+<main>
+  <nav class="tabs">
+    <a href="index.html">概要</a>
+    <a href="evaluation.html">経路評価</a>
+    <a href="proposal.html">変更提案</a>
+    <a class="active" href="architecture.html">経路図</a>
+  </nav>
+
+  <!-- SECTION: path-diagram -->
+  <h2>通信経路（{{DIRECTION}}）— 総合判定: {{OVERALL_DECISION}}</h2>
+  <p class="note">送信元（{{SOURCE_LABEL}}）から対象（{{TARGET_LABEL}}）までの間で、<b>実際に通過する制御レイヤ（許可 / 拒否）とノードのみ</b>を順に示す。経路上に存在しない（適用外）制御は図に描かず、下の「経路上に存在しない制御」に文章で記載する。各ホップの色帯はそのレイヤの判定（緑=許可 / 赤=拒否）。</p>
+  <div class="legend">
+    <span><i style="background:#107C10"></i>許可（Allow）</span>
+    <span><i style="background:#D13438"></i>拒否（Deny）</span>
+    <span><i style="background:#243A5E"></i>ノード（送信元 / 対象）</span>
+  </div>
+  <div class="flow">
+    <!-- BEGIN HOP_ITEMS -->
+    <div class="hop dec-{{HOP_DECISION}}">
+      <div class="lbl">{{HOP_LABEL}}</div>
+      <div class="typ">{{HOP_TYPE}}</div>
+      <span class="dec">{{HOP_DECISION_LABEL}}</span>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <!-- END HOP_ITEMS -->
+  </div>
+  <p class="note">図には送信元・対象ノードと、経路上で実際に評価された許可/拒否レイヤのみを表示する（適用外レイヤは図に含めない）。最後のホップ（対象リソース）の後の矢印は出力時に削除する（末尾の余分な <code>&rarr;</code> を残さない）。総合判定はいずれかのレイヤが拒否なら「拒否」（全レイヤ許可で「許可」）。</p>
+
+  <!-- SECTION: not-on-path -->
+  <h2>経路上に存在しない制御（適用外・図には非表示）</h2>
+  <p class="note">対象リソース種別や構成上、この通信経路には存在しない（評価対象外＝NA）の制御レイヤ。経路図には描かず、以下に理由を文章で示す。</p>
+  <ul class="nalist">
+    <!-- BEGIN NOT_ON_PATH_ITEMS -->
+    <li><b>{{NA_LAYER}}</b>: {{NA_REASON}}</li>
+    <!-- END NOT_ON_PATH_ITEMS -->
+  </ul>
+
+  <footer>本レポートはローカル限定（<code>.gitignore</code> 済み）。判定は評価時点の構成に基づく静的評価であり、アプリ層の認証・WAF・OS 内ファイアウォール等は含まない。</footer>
+</main>
+</body>
+</html>

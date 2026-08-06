@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<!--
+  ネットワークアクセス可否評価レポート — index.html テンプレート（ユースケース 003）
+  使い方:
+  - エージェント(azure-network-report-writer)はこの HTML を read_file で読み、下記トークンを findings.json の実値に置換して create_file で生成する（HTML を自作しない・外部スクリプト不要）。
+  - 出力フォルダ: reports/<YYYYMMDD-HHmmss>/ に index.html / evaluation.html / proposal.html / architecture.html を出力。
+  - <!-- BEGIN X --> 〜 <!-- END X --> は内部の行を雛形に実データで複製する。スタイル・クラス名・構造は変えない（自己完結・インライン CSS）。
+  - このテンプレは参照元。read_file で読み {{TOKEN}} 置換と BEGIN/END 行複製だけで完成させ create_file で 1 回書き出す（複製→編集しない・生成スクリプト不要）。<style> ブロック・<header> の <span class="crumb">・<footer> を削除・簡略化しない（テンプレを書き直さない）。各テーブルの <thead> の列（ラベル・列数・列順）を改変しない（列の新設・削除・改名は重大違反）。
+  - <!-- SECTION: name --> アンカーは各 <h2> セクションの必須マーカー。削除・改名しない（生成時に消してよいのは先頭コメントブロックのみ。SECTION アンカーは出力に残す。検証ゲートがアンカーの残存を機械チェックする）。
+  - 出力に {{...}} や BEGIN/END マーカー、この先頭コメントを残さないこと。
+  トークン: META_DATETIME(JST) / META_SCOPE / TENANT_ID / SUBSCRIPTION_NAME / SUBSCRIPTION_ID / RESOURCE_GROUP / COLLECTION_METHOD
+           TARGET_NAME / TARGET_TYPE / TARGET_RG / ENDPOINT_INPUT / INPUT_TYPE / RESOLVED_IPS / DIRECTION / PORT / PROTOCOL / DESIRED_STATE
+           OVERALL_DECISION(Allowed|Denied) / OVERALL_MATCHED_LAYER / OVERALL_REASON
+           LAYER_COUNT / DENY_LAYER_COUNT / PROPOSAL_COUNT / MEETS_DESIRED
+           CAP_NSG / CAP_FIREWALL / CAP_APPSVC / CAP_APIM / CAP_PAAS / CAP_ROUTE
+  区域: PATH_SUMMARY_ROWS（レイヤ別の順序・判定）、TOP_PROPOSAL_ROWS（主な変更提案・抜粋）
+  総合判定バッジは class="verdict v-Allowed" または "verdict v-Denied" を OVERALL_DECISION に一致させる。
+  ポート未指定時（PORT が「全ポート」）は、評価が全ポート前提である旨が <p class="note"> に残るようにする。
+  空区域の扱い（重要）: 区域が 0 件でも <h2>・テーブルを削除しない。tbody を空にせず、下記フォールバック行を 1 行だけ出力する。
+    - PATH_SUMMARY_ROWS 0 件（通常は発生しない・防御的）: <tr><td colspan="4" class="empty">該当なし</td></tr>
+    - TOP_PROPOSAL_ROWS 0 件（期待状態を満たす等）: <tr><td colspan="3" class="empty">該当なし（変更提案はありません）</td></tr>
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ネットワークアクセス可否評価レポート</title>
+<style>
+  :root{--blue:#0078D4;--dark:#243A5E;--bg:#faf9f8;--card:#fff;--bd:#edebe9;--tx:#201f1e;--sub:#605e5c;--good:#107C10;--warn:#F7A600;--bad:#D13438;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","Yu Gothic UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);font-size:14px;line-height:1.5}
+  header.topbar{background:linear-gradient(90deg,var(--dark),var(--blue));color:#fff;padding:14px 28px;display:flex;align-items:center;gap:12px}
+  header.topbar h1{font-size:18px;font-weight:600;margin:0}
+  header.topbar .crumb{margin-left:auto;font-size:12px;opacity:.9}
+  main{max-width:1120px;margin:0 auto;padding:24px 28px 48px}
+  nav.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px}
+  nav.tabs a{padding:8px 14px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--blue);text-decoration:none;font-weight:600;font-size:13px}
+  nav.tabs a.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .meta{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 24px;margin-bottom:24px}
+  .meta div{font-size:13px}.meta .k{color:var(--sub);margin-right:6px}
+  .meta code{background:#f3f2f1;padding:1px 6px;border-radius:4px}
+  h2{font-size:16px;font-weight:600;margin:28px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  .cards{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:8px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px 18px;min-width:150px;flex:1 1 150px}
+  .card .n{font-size:26px;font-weight:700;line-height:1}
+  .card .l{font-size:12px;color:var(--sub);margin-top:4px}
+  .verdict{display:inline-block;padding:6px 16px;border-radius:8px;font-size:18px;font-weight:700;color:#fff}
+  .verdict.v-Allowed{background:var(--good)}.verdict.v-Denied{background:var(--bad)}
+  .verdictbox{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .verdictbox .detail{font-size:13px;color:var(--sub)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:8px;overflow:hidden;margin:6px 0 20px;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd);vertical-align:top}
+  th{background:#f3f2f1;font-weight:600;color:var(--sub)}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#fff}
+  .dec-Allow{background:var(--good)}.dec-Deny{background:var(--bad)}.dec-NA{background:var(--sub)}
+  a{color:var(--blue)}
+  .note{color:var(--sub);font-size:12px;margin:4px 0 16px}
+  td.empty{text-align:center;color:var(--sub);font-style:italic}
+  footer{color:var(--sub);font-size:12px;margin-top:32px;border-top:1px solid var(--bd);padding-top:12px}
+</style>
+</head>
+<body>
+<header class="topbar"><h1>ネットワークアクセス可否評価レポート</h1><span class="crumb">READ 専用 / Reader 権限</span></header>
+<main>
+  <nav class="tabs">
+    <a class="active" href="index.html">概要</a>
+    <a href="evaluation.html">経路評価</a>
+    <a href="proposal.html">変更提案</a>
+    <a href="architecture.html">経路図</a>
+  </nav>
+
+  <div class="meta">
+    <div><span class="k">評価日時(JST)</span>{{META_DATETIME}}</div>
+    <div><span class="k">対象スコープ</span>{{META_SCOPE}}</div>
+    <div><span class="k">テナント ID</span><code>{{TENANT_ID}}</code></div>
+    <div><span class="k">サブスクリプション</span>{{SUBSCRIPTION_NAME}} <code>{{SUBSCRIPTION_ID}}</code></div>
+    <div><span class="k">リソースグループ</span>{{RESOURCE_GROUP}}</div>
+    <div><span class="k">収集手段</span>{{COLLECTION_METHOD}}</div>
+  </div>
+  <p class="note">READ 操作のみを実施（NSG / ファイアウォール / アクセス制限の変更・削除・追加は行っていない）。判定は収集時点の構成に基づく静的評価。</p>
+
+  <!-- SECTION: query -->
+  <h2>評価対象（クエリ）</h2>
+  <div class="meta">
+    <div><span class="k">対象リソース</span>{{TARGET_NAME}}</div>
+    <div><span class="k">リソース種別</span><code>{{TARGET_TYPE}}</code></div>
+    <div><span class="k">リソースグループ</span>{{TARGET_RG}}</div>
+    <div><span class="k">入力エンドポイント</span>{{ENDPOINT_INPUT}}（{{INPUT_TYPE}}）</div>
+    <div><span class="k">解決 IP</span><code>{{RESOLVED_IPS}}</code></div>
+    <div><span class="k">方向</span>{{DIRECTION}}</div>
+    <div><span class="k">ポート</span>{{PORT}}</div>
+    <div><span class="k">プロトコル</span>{{PROTOCOL}}</div>
+    <div><span class="k">期待状態</span>{{DESIRED_STATE}}</div>
+  </div>
+  <p class="note">ポートが「全ポート」の場合、評価はポートを限定しない前提（全ポート）で行っている。特定ポートに限定して再評価する場合は入力にポートを指定する。</p>
+
+  <!-- SECTION: verdict -->
+  <h2>総合判定</h2>
+  <div class="verdictbox">
+    <span class="verdict v-{{OVERALL_DECISION}}">{{OVERALL_DECISION}}</span>
+    <div class="detail">一致レイヤ: {{OVERALL_MATCHED_LAYER}}<br>根拠: {{OVERALL_REASON}}</div>
+  </div>
+  <div class="cards">
+    <div class="card"><div class="n">{{LAYER_COUNT}}</div><div class="l">評価レイヤ数</div></div>
+    <div class="card"><div class="n">{{DENY_LAYER_COUNT}}</div><div class="l">拒否レイヤ数</div></div>
+    <div class="card"><div class="n">{{PROPOSAL_COUNT}}</div><div class="l">変更提案数</div></div>
+    <div class="card"><div class="n">{{MEETS_DESIRED}}</div><div class="l">期待状態を満たすか</div></div>
+  </div>
+  <p class="note">経路制御の可否: NSG {{CAP_NSG}} / Azure Firewall {{CAP_FIREWALL}} / App Service アクセス制限 {{CAP_APPSVC}} / API Management {{CAP_APIM}} / PaaS ファイアウォール {{CAP_PAAS}} / ルートテーブル {{CAP_ROUTE}}</p>
+
+  <!-- SECTION: path-summary -->
+  <h2>経路レイヤ別の判定（送信元側→対象側）</h2>
+  <table>
+    <thead><tr><th>順序</th><th>レイヤ</th><th>判定</th><th>一致規則 / 根拠</th></tr></thead>
+    <tbody>
+      <!-- BEGIN PATH_SUMMARY_ROWS -->
+      <tr><td>{{ORDER}}</td><td>{{LAYER}}</td><td><span class="pill dec-{{DECISION}}">{{DECISION}}</span></td><td>{{MATCHED_AND_REASON}}</td></tr>
+      <!-- END PATH_SUMMARY_ROWS -->
+    </tbody>
+  </table>
+  <p class="note">総合判定は全レイヤの AND（いずれかのレイヤが拒否なら「拒否」、全レイヤ許可で「許可」）。詳細は <a href="evaluation.html">経路評価</a>を参照。</p>
+
+  <!-- SECTION: top-proposal -->
+  <h2>主な変更提案（抜粋）</h2>
+  <table>
+    <thead><tr><th>担当レイヤ</th><th>変更概要</th><th>トレードオフ</th></tr></thead>
+    <tbody>
+      <!-- BEGIN TOP_PROPOSAL_ROWS -->
+      <tr><td>{{LAYER}}</td><td>{{CHANGE_SUMMARY}}</td><td>{{TRADEOFF}}</td></tr>
+      <!-- END TOP_PROPOSAL_ROWS -->
+    </tbody>
+  </table>
+  <p class="note">判断チェックリストと具体的な変更案（az / Bicep）は <a href="proposal.html">変更提案</a>を参照。</p>
+
+  <footer>
+    判定は評価時点（{{META_DATETIME}}）の構成に基づく静的評価であり、アプリ層の認証・WAF ルール・OS 内ファイアウォール等は評価対象外。本レポートはローカル限定（<code>.gitignore</code> 済み）。シークレット等の機微情報は記載しない。
+  </footer>
+</main>
+</body>
+</html>
