@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<!--
+  evaluation.html テンプレート（ユースケース 003）— 経路レイヤ別の評価（各レイヤの適用可否・判定・一致規則、および評価した規則の明細）。
+  区域: LAYER_ROWS（レイヤ別サマリ: 順序 / レイヤ / 制御 / 適用 / 判定 / 一致規則 / 根拠 / 情報源）、
+       RULE_ROWS（評価した規則の明細: レイヤ / 規則名 / 優先度 / 方向 / アクション / プロトコル / 送信元 or 宛先 / ポート範囲 / 一致）。
+  一致（matched）列は「はい」/「いいえ」で表す。判定 pill は class="pill dec-Allow|dec-Deny|dec-NA"。
+  空セクションの扱い（重要）: 区域が 0 件でも <h2> やテーブルを削除しない。tbody を空にせず、下記フォールバック行を 1 行だけ出力してセクションを残す。
+    - LAYER_ROWS 0 件（通常は発生しない・防御的）: <tr><td colspan="8" class="empty">該当なし</td></tr>
+    - RULE_ROWS 0 件（規則を取得できない・確認不可）: <tr><td colspan="9" class="empty">確認不可（規則を READ 取得できませんでした）</td></tr>
+  「該当なし」は収集を実施し実際に 0 件だった場合のみ。参照不可で判定できない場合は「確認不可」と明示する（列数=各表の列数）。
+  このテンプレは参照元。read_file で読み置換・行複製だけで完成させ create_file で 1 回書き出す（複製→編集しない・生成スクリプト不要）。<style>・<span class="crumb">・<footer> を削除・簡略化しない。
+  各テーブルの <thead> の列（ラベル・列数・列順）を改変しない（列の新設・削除・改名は重大違反）。
+  <!-- SECTION: name --> アンカーは各 <h2> セクションの必須マーカー。削除・改名しない（検証ゲートが残存を機械チェックする）。
+  出力に {{...}} や BEGIN/END マーカー、この先頭コメントを残さないこと。
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>経路評価 — ネットワークアクセス可否評価レポート</title>
+<style>
+  :root{--blue:#0078D4;--dark:#243A5E;--bg:#faf9f8;--card:#fff;--bd:#edebe9;--tx:#201f1e;--sub:#605e5c;--good:#107C10;--warn:#F7A600;--bad:#D13438;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","Yu Gothic UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);font-size:14px;line-height:1.5}
+  header.topbar{background:linear-gradient(90deg,var(--dark),var(--blue));color:#fff;padding:14px 28px;display:flex;align-items:center;gap:12px}
+  header.topbar h1{font-size:18px;font-weight:600;margin:0}
+  header.topbar .crumb{margin-left:auto;font-size:12px;opacity:.9}
+  main{max-width:1120px;margin:0 auto;padding:24px 28px 48px}
+  nav.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px}
+  nav.tabs a{padding:8px 14px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--blue);text-decoration:none;font-weight:600;font-size:13px}
+  nav.tabs a.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+  h2{font-size:16px;font-weight:600;margin:28px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:8px;overflow:hidden;margin:6px 0 20px;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd);vertical-align:top}
+  th{background:#f3f2f1;font-weight:600;color:var(--sub)}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#fff}
+  .dec-Allow{background:var(--good)}.dec-Deny{background:var(--bad)}.dec-NA{background:var(--sub)}
+  a{color:var(--blue)}
+  .note{color:var(--sub);font-size:12px;margin:4px 0 16px}
+  td.empty{text-align:center;color:var(--sub);font-style:italic}
+  .hit{font-weight:700;color:var(--bad)}
+  footer{color:var(--sub);font-size:12px;margin-top:32px;border-top:1px solid var(--bd);padding-top:12px}
+</style>
+</head>
+<body>
+<header class="topbar"><h1>経路評価</h1><span class="crumb">READ 専用 / Reader 権限</span></header>
+<main>
+  <nav class="tabs">
+    <a href="index.html">概要</a>
+    <a class="active" href="evaluation.html">経路評価</a>
+    <a href="proposal.html">変更提案</a>
+    <a href="architecture.html">経路図</a>
+  </nav>
+
+  <!-- SECTION: layer-summary -->
+  <h2>レイヤ別の適用可否・判定（送信元側→対象側）</h2>
+  <p class="note">各レイヤで入力（IP / 方向 / ポート）に一致する規則を優先度順に評価し、最初に一致した規則で許可 / 拒否を確定。適用外（対象リソースに存在しない制御）は判定「NA」。</p>
+  <table>
+    <thead><tr><th>順序</th><th>レイヤ</th><th>制御</th><th>適用</th><th>判定</th><th>一致規則</th><th>根拠</th><th>情報源</th></tr></thead>
+    <tbody>
+      <!-- BEGIN LAYER_ROWS -->
+      <tr><td>{{ORDER}}</td><td>{{LAYER}}</td><td>{{CONTROL}}</td><td>{{APPLICABLE}}</td><td><span class="pill dec-{{DECISION}}">{{DECISION}}</span></td><td>{{MATCHED_RULE}}</td><td>{{REASON}}</td><td>{{SOURCE}}</td></tr>
+      <!-- END LAYER_ROWS -->
+    </tbody>
+  </table>
+
+  <!-- SECTION: rule-detail -->
+  <h2>評価した規則の明細</h2>
+  <p class="note">各レイヤで評価した規則の一覧（同内容は evaluated-rules.csv にも出力）。「一致」列が「はい」の規則が、そのレイヤの判定を決定した規則。</p>
+  <table>
+    <thead><tr><th>レイヤ</th><th>規則名</th><th>優先度</th><th>方向</th><th>アクション</th><th>プロトコル</th><th>送信元 / 宛先</th><th>ポート範囲</th><th>一致</th></tr></thead>
+    <tbody>
+      <!-- BEGIN RULE_ROWS -->
+      <tr><td>{{LAYER}}</td><td>{{RULE_NAME}}</td><td>{{PRIORITY}}</td><td>{{RULE_DIRECTION}}</td><td>{{ACCESS}}</td><td>{{RULE_PROTOCOL}}</td><td>{{SOURCE_OR_DEST}}</td><td>{{PORT_RANGE}}</td><td>{{MATCHED}}</td></tr>
+      <!-- END RULE_ROWS -->
+    </tbody>
+  </table>
+
+  <footer>本レポートはローカル限定（<code>.gitignore</code> 済み）。規則の生データは同フォルダの evaluated-rules.csv を参照。判定は評価時点の構成に基づく静的評価。</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<!--
+  proposal.html テンプレート（ユースケース 003）— 期待状態に対するギャップと、担当レイヤ別の「何を判断すべきか（考慮事項チェックリスト）」＋変更案（az / Bicep）。
+  重要: 本ページは提案のみ。az / Bicep は実行しない前提のコード提示（コピー用）。
+  区域: PROPOSAL_BLOCKS（提案ブロックを提案数だけ複製）。各ブロック内に CONSIDERATION_ITEMS（チェックリスト <li>）を複製する。
+  ギャップ meta（GAP_DESIRED / GAP_MEETS / GAP_RESPONSIBLE / GAP_OVERALL）はギャップサマリに表示。
+  空セクションの扱い（重要）: 提案が 0 件でも <h2>「変更提案」を削除しない。PROPOSAL_BLOCKS を空にせず、下記フォールバックを 1 回だけ出力する。
+    - PROPOSAL_BLOCKS 0 件（期待状態を満たす / CheckOnly）: <p class="empty">変更提案はありません（現状が期待状態を満たしています。または現状確認のみの依頼です）。</p>
+  このテンプレは参照元。read_file で読み置換・ブロック複製だけで完成させ create_file で 1 回書き出す（複製→編集しない・生成スクリプト不要）。<style>・<span class="crumb">・<footer> を削除・簡略化しない。
+  <!-- SECTION: name --> アンカーは各 <h2> セクションの必須マーカー。削除・改名しない（検証ゲートが残存を機械チェックする）。
+  出力に {{...}} や BEGIN/END マーカー、この先頭コメントを残さないこと。az / Bicep の実値には機密（実 ID・実 IP・シークレット）を含めず、プレースホルダ or ローカル実値のみ（reports/ 配下はローカル限定）。
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>変更提案 — ネットワークアクセス可否評価レポート</title>
+<style>
+  :root{--blue:#0078D4;--dark:#243A5E;--bg:#faf9f8;--card:#fff;--bd:#edebe9;--tx:#201f1e;--sub:#605e5c;--good:#107C10;--warn:#F7A600;--bad:#D13438;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","Yu Gothic UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);font-size:14px;line-height:1.5}
+  header.topbar{background:linear-gradient(90deg,var(--dark),var(--blue));color:#fff;padding:14px 28px;display:flex;align-items:center;gap:12px}
+  header.topbar h1{font-size:18px;font-weight:600;margin:0}
+  header.topbar .crumb{margin-left:auto;font-size:12px;opacity:.9}
+  main{max-width:1120px;margin:0 auto;padding:24px 28px 48px}
+  nav.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px}
+  nav.tabs a{padding:8px 14px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--blue);text-decoration:none;font-weight:600;font-size:13px}
+  nav.tabs a.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+  h2{font-size:16px;font-weight:600;margin:28px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  h3{font-size:14px;font-weight:600;margin:16px 0 8px}
+  .meta{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 24px;margin-bottom:24px}
+  .meta div{font-size:13px}.meta .k{color:var(--sub);margin-right:6px}
+  .prop{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:16px 20px;margin:0 0 16px}
+  .prop .layer{display:inline-block;background:var(--dark);color:#fff;padding:2px 10px;border-radius:6px;font-size:12px;font-weight:700;margin-bottom:8px}
+  .prop ul{margin:6px 0 12px;padding-left:20px}
+  .prop li{margin:3px 0}
+  pre{background:#1e1e1e;color:#e6e6e6;padding:12px 14px;border-radius:6px;overflow-x:auto;font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.45;margin:6px 0 12px}
+  .tradeoff{font-size:12.5px;color:var(--sub);border-left:3px solid var(--warn);padding-left:10px;margin:8px 0}
+  a{color:var(--blue)}
+  .note{color:var(--sub);font-size:12px;margin:4px 0 16px}
+  .empty{text-align:center;color:var(--sub);font-style:italic;background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:20px}
+  footer{color:var(--sub);font-size:12px;margin-top:32px;border-top:1px solid var(--bd);padding-top:12px}
+</style>
+</head>
+<body>
+<header class="topbar"><h1>変更提案</h1><span class="crumb">READ 専用 / 提案のみ（実行しない）</span></header>
+<main>
+  <nav class="tabs">
+    <a href="index.html">概要</a>
+    <a href="evaluation.html">経路評価</a>
+    <a class="active" href="proposal.html">変更提案</a>
+    <a href="architecture.html">経路図</a>
+  </nav>
+
+  <!-- SECTION: gap -->
+  <h2>期待状態とのギャップ</h2>
+  <div class="meta">
+    <div><span class="k">期待状態</span>{{GAP_DESIRED}}</div>
+    <div><span class="k">現状の総合判定</span>{{GAP_OVERALL}}</div>
+    <div><span class="k">期待状態を満たすか</span>{{GAP_MEETS}}</div>
+    <div><span class="k">担当レイヤ</span>{{GAP_RESPONSIBLE}}</div>
+  </div>
+  <p class="note">下記は「期待状態を実現するために何を判断し、どう変更しうるか」の提案。<b>az / Bicep はコピー用の提案であり、本エージェントは実行しない</b>。適用可否・実施はユーザーが判断する。最小権限（送信元は最小範囲・ポート/プロトコルは限定）を原則とする。</p>
+
+  <!-- SECTION: proposals -->
+  <h2>担当レイヤ別の判断チェックリストと変更案</h2>
+  <!-- BEGIN PROPOSAL_BLOCKS -->
+  <div class="prop">
+    <span class="layer">{{LAYER}}</span>
+    <div>{{CHANGE_SUMMARY}}</div>
+    <h3>何を判断すべきか（チェックリスト）</h3>
+    <ul>
+      <!-- BEGIN CONSIDERATION_ITEMS -->
+      <li>{{CONSIDERATION}}</li>
+      <!-- END CONSIDERATION_ITEMS -->
+    </ul>
+    <h3>変更案（Azure CLI）</h3>
+    <pre>{{AZ_CLI}}</pre>
+    <h3>変更案（Bicep）</h3>
+    <pre>{{BICEP}}</pre>
+    <div class="tradeoff">トレードオフ / 留意点: {{TRADEOFF}}</div>
+    <div class="note">参考: <a href="{{REFERENCE_URL}}">{{REFERENCE_URL}}</a></div>
+  </div>
+  <!-- END PROPOSAL_BLOCKS -->
+
+  <footer>本レポートはローカル限定（<code>.gitignore</code> 済み）。提案の az / Bicep は実行前に対象・優先度衝突・影響範囲をレビューすること。実 ID・実 IP・シークレットを公開ファイルに転記しない。</footer>
+</main>
+</body>
+</html>
