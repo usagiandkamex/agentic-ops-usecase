@@ -59,7 +59,7 @@ user-invocable: false
 **6-2. テンプレートを読み込み → プレースホルダ置換 → 書き出し（1 ファイルずつ）**:
 1. **テンプレートを `read_file` で全文読み込む**（`Copy-Item` はしない）。テンプレは**参照元**で保存先に複製せず、置換・行複製で**完成形にしてから** `create_file` で 1 回だけ書き出す。**前回のレポート・記憶した HTML をベースに再構成しない**。
 2. **スカラー `{{TOKEN}}` を `findings.json` の実値で置換**する。総合判定バッジは `class="verdict v-Allowed|v-Denied"` を `overall.decision` に一致させる。判定ピルは `dec-Allow`/`dec-Deny`/`dec-NA`。
-3. **`<!-- BEGIN X -->` 〜 `<!-- END X -->` 区域は、内部の 1 行 / 1 ブロックを雛形として実データの全要素を複製**する（`PATH_SUMMARY_ROWS`=applicable レイヤ、`LAYER_ROWS`=全 pathLayers、`RULE_ROWS`=全 rulesEvaluated、`PROPOSAL_BLOCKS`=proposals、`CONSIDERATION_ITEMS`=各提案の considerations、`HOP_ITEMS`=送信元＋各レイヤ＋対象）。**件数が多くても省略・要約しない**。0 件の場合も `<tbody>`/ブロックを空にせず、各テンプレ先頭コメントのフォールバック（「該当なし」/「確認不可」）を 1 回だけ出力してセクションを残す。
+3. **`<!-- BEGIN X -->` 〜 `<!-- END X -->` 区域は、内部の 1 行 / 1 ブロックを雛形として実データの全要素を複製**する（`PATH_SUMMARY_ROWS`=applicable レイヤ、`LAYER_ROWS`=全 pathLayers、`RULE_ROWS`=全 rulesEvaluated、`PROPOSAL_BLOCKS`=proposals、`CONSIDERATION_ITEMS`=各提案の considerations、`HOP_ITEMS`=**送信元ノード＋経路上で実際に通過するレイヤ（`applicable=true` かつ `decision` が `Allow`/`Deny` のもののみ・`dec-NA` は図に出さない）＋対象ノード**を order 順に並べる、`NOT_ON_PATH_ITEMS`=**適用外レイヤ（`applicable=false` または `decision=NA`）を `pathLayers[].reason`（無ければ「対象リソース種別にない/経路に含まれない」等）付きで文章列挙**）。**件数が多くても省略・要約しない**。図（HOP_ITEMS）に適用外レイヤを含めない（NA は必ず NOT_ON_PATH_ITEMS へ）。0 件の場合も `<tbody>`/ブロックを空にせず、各テンプレ先頭コメントのフォールバック（「該当なし」/「確認不可」）を 1 回だけ出力してセクションを残す（NOT_ON_PATH_ITEMS が 0 件なら `<li class="empty">該当なし（すべての制御レイヤが経路上に存在します）。</li>`）。
    **テンプレートの見出し・列・構造は改変しない**（`<thead>` の列ラベル・列数・列順を一字一句同一に）。**`<style>` ブロック・`<span class="crumb">`・`<footer>` を削除・簡略化しない**。**各 `<h2>` 直前の `<!-- SECTION: x -->` アンカーを出力に残す**。
    **architecture.html の HOP_ITEMS は末尾（対象ノード）の後の余分な矢印（`&rarr;`）を出力しない**。
 4. **テンプレート先頭のコメントブロックを削除**する。
@@ -71,7 +71,7 @@ user-invocable: false
 - (1) `{{` が 0 件（全 HTML/CSV/JSON）。(2) `<!-- BEGIN` / `<!-- END` が 0 件。(3) テンプレート先頭コメントが残っていない。
 - (4) CSV の先頭 3 バイトが `239,187,191`（BOM）。(5) `findings.json` が有効な JSON。(6) CSV の全行の列数がヘッダ（10 列）と一致。
 - (7) **`evaluated-rules.csv` のデータ行数が `findings.json` の全 `pathLayers[].rulesEvaluated` の合計件数と一致**（全件出力・省略なし）。(8) **findings は `findings.json` の 1 つだけ**（別名なし）。
-- (9) **セクション保持**: index=`query`/`verdict`/`path-summary`/`top-proposal`、evaluation=`layer-summary`/`rule-detail`、proposal=`gap`/`proposals`、architecture=`path-diagram` の `<!-- SECTION: x -->` が全て存在。
+- (9) **セクション保持**: index=`query`/`verdict`/`path-summary`/`top-proposal`、evaluation=`layer-summary`/`rule-detail`、proposal=`gap`/`proposals`、architecture=`path-diagram`/`not-on-path` の `<!-- SECTION: x -->` が全て存在。
 - (10) **テンプレ準拠**: 各 HTML に `<footer>` と `class="crumb"` が存在し、各テーブルの `<thead>` がテンプレートと一字一句一致。
 - (11) **判定クラスの妥当**: 判定ピルの class が `dec-Allow`/`dec-Deny`/`dec-NA` のいずれか、総合判定バッジが `v-Allowed`/`v-Denied` のいずれか（ラベル直書きや空クラスなし・大文字小文字を区別して検査）。
 - (12) **整合**: `summary.overallDecision` が `overall.decision` と一致。`gap.meets=false` かつ `desiredState≠CheckOnly` なら `proposals` が 1 件以上・proposal.html にブロックが描画されている。
@@ -91,12 +91,12 @@ user-invocable: false
   $badDec=@($j.pathLayers | Where-Object { $_.applicable -eq $true -and [string]::IsNullOrWhiteSpace($_.decision) }).Count
   if($badDec -ne 0){ "NG: decision 未確定の applicable レイヤ=$badDec（evaluator へ差し戻し）" }  # 出力なし期待
   if($j.gap.meets -eq $false -and $j.query.desiredState -ne 'CheckOnly' -and @($j.proposals).Count -lt 1){ "NG: meets=false かつ desiredState≠CheckOnly なのに proposals が 0 件" }  # 出力なし期待
-  $req=@{'index.html'=@('query','verdict','path-summary','top-proposal');'evaluation.html'=@('layer-summary','rule-detail');'proposal.html'=@('gap','proposals');'architecture.html'=@('path-diagram')}; foreach($f in $req.Keys){ $c=Get-Content -Raw "$d/$f"; foreach($s in $req[$f]){ if($c -notmatch "SECTION: $s"){ "NG: $f にセクション $s が無い" } } }  # 出力なし期待
+  $req=@{'index.html'=@('query','verdict','path-summary','top-proposal');'evaluation.html'=@('layer-summary','rule-detail');'proposal.html'=@('gap','proposals');'architecture.html'=@('path-diagram','not-on-path')}; foreach($f in $req.Keys){ $c=Get-Content -Raw "$d/$f"; foreach($s in $req[$f]){ if($c -notmatch "SECTION: $s"){ "NG: $f にセクション $s が無い" } } }  # 出力なし期待
   foreach($p in 'index.html','evaluation.html','proposal.html','architecture.html'){ $h=Get-Content -Raw "$d/$p"; "$p footer=$([bool]($h -match '<footer'))/crumb=$([bool]($h -match 'class=\"crumb\"'))" }  # 各 True/True 期待
   $tpl='usecases/003-network-access-evaluation/report-template'; foreach($f in 'index.html','evaluation.html','proposal.html','architecture.html'){ $a=([regex]::Matches((Get-Content -Raw "$tpl/$f"),'<thead><tr>.*?</tr></thead>').Value) -join ''; $b2=([regex]::Matches((Get-Content -Raw "$d/$f"),'<thead><tr>.*?</tr></thead>').Value) -join ''; if($a -ne $b2){ "NG: $f の <thead> がテンプレと不一致" } }  # 出力なし期待
   (Select-String -Path "$d/index.html","$d/evaluation.html" -Pattern 'dec-(?!(?:Allow|Deny|NA)\b)' -AllMatches -CaseSensitive | Measure-Object).Count  # 期待 0（不正な判定クラスなし）
   (Select-String -Path "$d/index.html" -Pattern 'verdict v-(?!(?:Allowed|Denied)\b)' -AllMatches -CaseSensitive | Measure-Object).Count  # 期待 0（不正な総合判定バッジなし）
-  (Select-String -Path "$d/architecture.html" -Pattern '(?s)<!-- SECTION: path-diagram -->.*?</div>\s*</main>' | Select-String -Pattern '&rarr;\s*</div>\s*</main>' | Measure-Object).Count  # 期待 0（末尾の孤立矢印なし）
+  (Select-String -Path "$d/architecture.html" -Pattern '&rarr;\s*</div>\s*<p class="note">図には' | Measure-Object).Count  # 期待 0（.flow 末尾の孤立矢印なし）
   (Select-String -Path "$d/progress.md" -Pattern '\[ \]' -AllMatches | Measure-Object).Count  # 期待 0（全チェック消化）
   (Get-ChildItem "$d/temp-*","$d/findings-*.json" -ErrorAction SilentlyContinue | Measure-Object).Count  # 期待 0（一時/別名ファイルなし）
   ```

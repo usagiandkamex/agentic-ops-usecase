@@ -13,7 +13,7 @@
    - [index.html](index.html) — 概要（メタ・評価対象クエリ・総合判定バッジ・サマリ件数・経路レイヤ別の判定・主な変更提案の抜粋・各ページへのタブリンク）
    - [evaluation.html](evaluation.html) — 経路評価（レイヤ別の適用可否・判定・一致規則、および評価した規則の明細）
    - [proposal.html](proposal.html) — 変更提案（期待状態とのギャップ、担当レイヤ別の「何を判断すべきか」チェックリストと変更案（az / Bicep）。**提案のみ・実行しない**）
-   - [architecture.html](architecture.html) — 経路図（送信元 → 各制御レイヤ → 対象リソースのホップ図）
+   - [architecture.html](architecture.html) — 経路図（送信元 → 対象リソースの間で**実際に通過する制御レイヤ（許可/拒否）とノードのみ**を図示するホップ図。適用外（NA）の制御は図に描かず、「経路上に存在しない制御」セクション（not-on-path）に理由を文章で記載）
 2. **CSV（機械可読データ）** — `{{RULE_ROWS}}` を全データ行に置換して生成（UTF-8 BOM 付き）:
    - [evaluated-rules.csv](evaluated-rules.csv) — 評価した全規則の明細（レイヤ・規則名・優先度・方向・アクション・プロトコル・送信元/宛先・ポート範囲・一致・レイヤ判定）
 3. **[findings.json](findings.json)** — 中間データ（単一のデータ源）。HTML/CSV はこの実データで生成する。
@@ -31,7 +31,7 @@
 - **テンプレートのセクション（`<h2>`・テーブル・提案ブロック）は 0 件でも削除しない**。`<tbody>` を空のまま残さず、各テンプレ先頭コメントに記載の
   フォールバック行を **1 回だけ**出力してセクションを残す。
 - **「該当なし」と「確認不可」を区別する**: 規則を READ 取得して実際に 0 件のときのみ「該当なし」。参照不可で判定・収集できない場合は「確認不可（<制御> を READ 取得できませんでした）」と明示する（`capabilityDetection` と矛盾させない）。
-- **必須 SECTION アンカー**: index=`query`/`verdict`/`path-summary`/`top-proposal`、evaluation=`layer-summary`/`rule-detail`、proposal=`gap`/`proposals`、architecture=`path-diagram`。生成時に削除・改名せず出力に残す（消してよいのは先頭コメントブロックのみ）。欠落＝`<h2>` セクション削除として検証ゲートで不合格。
+- **必須 SECTION アンカー**: index=`query`/`verdict`/`path-summary`/`top-proposal`、evaluation=`layer-summary`/`rule-detail`、proposal=`gap`/`proposals`、architecture=`path-diagram`/`not-on-path`。生成時に削除・改名せず出力に残す（消してよいのは先頭コメントブロックのみ）。欠落＝`<h2>` セクション削除として検証ゲートで不合格。
 - **本ルールは HTML 限定**。CSV は 0 件ならヘッダ行のみ（合成レコードを追加しない）。`findings.json` の配列も空配列のままにする。index のサマリカード（件数）は 0 でも数値 `0` を表示する。
 
 ## 判定モデル（決定論・evaluator が適用）

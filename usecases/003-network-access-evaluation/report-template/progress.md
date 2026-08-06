@@ -49,10 +49,10 @@
 - [ ] 前回レポート・簡易版・記憶した HTML をベースに再構成していない（毎回テンプレを read_file した内容のみがベース）
 - [ ] 各 HTML の `<style>` ブロック・`<header>` の `<span class="crumb">`・`<footer>` を削除・簡略化していない
 - [ ] 各 HTML の `<h2>` セクションを 1 つも削除していない（0 件でもフォールバック行でセクションを残す）
-- [ ] 各 HTML に必須 `<!-- SECTION: x -->` アンカーが全て残っている（index=query/verdict/path-summary/top-proposal、evaluation=layer-summary/rule-detail、proposal=gap/proposals、architecture=path-diagram）: <アンカー検査出力 不足 0 件>
+- [ ] 各 HTML に必須 `<!-- SECTION: x -->` アンカーが全て残っている（index=query/verdict/path-summary/top-proposal、evaluation=layer-summary/rule-detail、proposal=gap/proposals、architecture=path-diagram/not-on-path）: <アンカー検査出力 不足 0 件>
 - [ ] 各テーブルの <thead> 列がテンプレートと一致（列の新設・削除・改名なし）: <thead 検査 不一致 0 件>
 - [ ] 判定ピルのクラスが dec-Allow/dec-Deny/dec-NA のみ・総合判定バッジが v-Allowed/v-Denied のみ（ラベル直書きなし）
-- [ ] architecture.html の末尾に余分な矢印（&rarr;）が残っていない
+- [ ] architecture.html は送信元→対象で実際に通過するホップ（Node/Allow/Deny）のみを図示し、適用外（NA）は not-on-path セクションに文章で列挙（図に NA ホップを出さない）・末尾の余分な矢印（&rarr;）が残っていない
 - [ ] レポートフォルダに temp-*.* / 別名 findings-*.json が残っていない（成果物は HTML4/CSV1/findings.json/progress.md のみ）
 - [ ] BEGIN/END 区域は対応配列の全要素を1行ずつ展開（省略・集約行なし）
 - [ ] 出力に {{...}} / BEGIN/END マーカー / テンプレ先頭コメントが残っていない
