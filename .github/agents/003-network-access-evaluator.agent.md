@@ -62,25 +62,28 @@ user-invocable: false
 **5-1. レイヤ別判定（〈参照 E〉・決定論）**
 - 各 applicable レイヤで、`query`（解決 IP / 方向 / ポート・プロトコル）に一致する規則を**優先度順**に評価し、**最初に一致した規則**で `matched`（rule / action / priority）と `decision`（Allow/Deny）を確定する。一致した規則の `rulesEvaluated[].matched=true` を設定する。
 - `applicable=false` のレイヤは `decision=NA`（総合判定に影響しない）。取得不可（`rulesEvaluated=[]`＋reason）のレイヤは `decision=NA` とし `reason` に「確認不可」を維持（許可とみなさない）。
-- 判定根拠を `pathLayers[].reason` に記述する（どの規則がなぜ一致したか）。
+- 判定根拠を `pathLayers[].reason` に**日本語で**記述する（どの規則がなぜ一致したか）。
 
 **5-2. 総合判定（AND）**
-- **総合判定 = 全 applicable レイヤの AND**。いずれかが `Deny` なら `overall.decision=Denied`（**最初に拒否したレイヤ**を `overall.matchedLayer`）。全 applicable レイヤが `Allow` なら `overall.decision=Allowed`。`overall.reason` に確定根拠を記述。
+- **総合判定 = 全 applicable レイヤの AND**。いずれかが `Deny` なら `overall.decision=Denied`（**最初に拒否したレイヤ**を `overall.matchedLayer`）。全 applicable レイヤが `Allow` なら `overall.decision=Allowed`。`overall.reason` に確定根拠を**日本語で**記述し、**拒否レイヤが複数ある場合はその全てを列挙**する（最初の 1 レイヤだけでなく「他にも X・Y が Deny」と明記）。
 - **取得不可レイヤがある場合**は、その旨を `overall.reason` に明記し「確認不可レイヤを許可とみなさない」ことを述べる（総合が Allowed でも留意点として残す）。
 
 **5-3. ギャップ分析（gap）**
 - `gap.desiredState = query.desiredState`。`CheckOnly` なら `gap.meets=true`・`responsibleLayers=[]`・提案なし。
-- `Allow`/`Deny` のとき、`overall.decision` が期待と一致すれば `gap.meets=true`（提案なし）、不一致なら `gap.meets=false` とし、**期待実現の担当レイヤ**を `gap.responsibleLayers[]` に列挙する（許可したい→現状拒否している最初のレイヤ＝ブロッカー、拒否したい→現状許可している各レイヤのうち最小変更で塞げるレイヤ）。
+- `Allow`/`Deny` のとき、`overall.decision` が期待と一致すれば `gap.meets=true`（提案なし）、不一致なら `gap.meets=false` とし、**期待実現の担当レイヤ**を `gap.responsibleLayers[]` に列挙する。**AND 判定の非対称性に注意**（ここが誤りやすい）:
+  - **許可したい（現状 Denied）**: 総合を Allowed にするには**すべての Deny レイヤ**を許可へ変える必要がある（1 つでも Deny が残れば通らない）。`responsibleLayers` には **`decision=Deny` の全レイヤ**を列挙する（最初の 1 レイヤだけにしない）。到達可能性 Deny（`matched=公開受信経路なし`）も担当レイヤに含め、公開経路の新設が必要な点を提案で明示する。
+  - **拒否したい（現状 Allowed）**: いずれか 1 レイヤで拒否すれば総合は Denied になる。`responsibleLayers` には**最小変更で安全に塞げるレイヤ**（通常 1 つ・複数候補可）を挙げる。
 
 **5-4. 変更提案（proposals・〈参照 P〉・提案のみ）**
-- `gap.meets=false` のときのみ、担当レイヤごとに `proposals[]` を生成する（`layer` / `considerations[]`（**何を判断すべきか**チェックリスト）/ `changeSummary` / `azCli` / `bicep` / `tradeoff` / `reference`）。
+- `gap.meets=false` のときのみ、`gap.responsibleLayers[]` の**各担当レイヤに対して 1 件ずつ** `proposals[]` を生成する（`responsibleLayers` と `proposals[].layer` を一致させ、担当レイヤを漏らさない）。各提案は `layer` / `considerations[]`（**何を判断すべきか**チェックリスト）/ `changeSummary` / `azCli` / `bicep` / `tradeoff` / `reference` を揃える（すべて**日本語**。az/Bicep コード・コマンド・識別子は原文可）。
+- **許可したい（現状 Denied）で複数レイヤが Deny のとき（重要）**: **全 Deny レイヤ分の提案を出す**。1 レイヤだけの提案にしない（1 レイヤを変えても他の Deny が残り総合は Allowed にならないため）。**各提案の `changeSummary`/`tradeoff` に「総合を Allowed にするにはこれら全レイヤ（例: 境界・Azure Firewall・NSG）の変更が必要」である旨を明記**する。より安全な代替（Azure Bastion / VPN / JIT / Private Endpoint 等）を推す場合も、**要求どおりの直接経路を通すには全 Deny レイヤの変更が必要という事実を省略せず併記**し、代替案は別の proposal（`layer` に該当レイヤまたは `代替案` を明示）として加える。
 - **最小権限を原則**（送信元は最小範囲＝単一 IP / 最小 CIDR、ポート・プロトコルは限定、可能なら Service Tag / FQDN / プライベートエンドポイントで代替）。az / Bicep は**コピー用の提案**であり、**実行しない**。
-- 実行前に判断すべき事項（送信元は単一 IP か CIDR か、既存規則の優先度と衝突しないか、Service Tag/FQDN で代替できないか、対象ポート/プロトコルに限定できるか、監査・変更管理の要否等）を `considerations[]` に列挙する。
+- 実行前に判断すべき事項（送信元は単一 IP か CIDR か、既存規則の優先度と衝突しないか、Service Tag/FQDN で代替できないか、対象ポート/プロトコルに限定できるか、監査・変更管理の要否等）を `considerations[]` に日本語で列挙する。
 
 **5-5. summary の確定**
 - `summary`（`overallDecision` / `layerCount`（applicable 数）/ `denyLayerCount` / `proposalCount` / `meetsDesired`）を確定する。
 
-- 🔍 **レビュー 5**: (a) 各レイヤ判定に根拠（一致規則・優先度）が付いているか。(b) 総合判定が全 applicable レイヤの AND と整合するか。(c) 取得不可レイヤを許可とみなしていないか。(d) `desiredState≠CheckOnly` かつ `meets=false` なら `proposals[]` が 1 件以上あり、各提案に considerations（判断チェックリスト）＋az＋Bicep＋tradeoff＋reference が揃っているか。(e) `target`/`rulesEvaluated` を書き換えていないか。(f) **G2**: 全 applicable レイヤに matched/decision 確定・overall 整合・summary 各件数が pathLayers/proposals と一致。**消化後に progress.md の手順 5・G2 を更新**して親へ返す（ここでターンを終える＝親が report-writer を起動する）。
+- 🔍 **レビュー 5**: (a) 各レイヤ判定に根拠（一致規則・優先度）が付いているか。(b) 総合判定が全 applicable レイヤの AND と整合するか。(c) 取得不可レイヤを許可とみなしていないか。(d) `desiredState≠CheckOnly` かつ `meets=false` なら `proposals[]` があり、**許可したい場合は全 Deny レイヤを網羅**（`responsibleLayers`＝全 Deny レイヤ、`proposals[].layer` がそれらを漏れなくカバー）し、各提案に considerations＋az＋Bicep＋tradeoff＋reference が揃っているか。(d2) **説明文（reason/overall.reason/considerations/changeSummary/tradeoff）が日本語か**（英文のままにしない）。(e) `target`/`rulesEvaluated` を書き換えていないか。(f) **G2**: 全 applicable レイヤに matched/decision 確定・overall 整合・拒否レイヤを全列挙・summary 各件数（`denyLayerCount`/`proposalCount`）が pathLayers/proposals と一致・許可希望時は `responsibleLayers` が全 Deny レイヤと一致。**消化後に progress.md の手順 5・G2 を更新**して親へ返す（ここでターンを終える＝親が report-writer を起動する）。
 
 ---
 
@@ -96,6 +99,8 @@ user-invocable: false
 - **総合 = 全 applicable レイヤの AND**（いずれか Deny で Denied・最初の拒否レイヤを matched）。`NA` は AND に含めない。
 
 ### 参照 P. 変更提案の指針（提案のみ・実行しない）
+- **記述はすべて日本語**（`considerations` / `changeSummary` / `tradeoff` の説明文。az/Bicep コード・コマンド・識別子は原文可）。
+- **全 Deny レイヤの網羅（許可したい場合・最重要）**: 総合が Denied で複数レイヤが Deny のとき、`proposals[]` は**全 Deny レイヤをカバー**する（`responsibleLayers` と一対一）。1 レイヤだけの提案にしない。1 レイヤを変えても他の Deny が残れば総合は Allowed にならないため、**「全レイヤ変更が前提」**である旨を明記する。代替（Bastion/VPN/JIT/Private Endpoint）を推す場合も、直接経路実現には全 Deny レイヤ変更が必要な事実を併記する。
 - **最小権限**: 送信元は最小範囲（単一 IP / 最小 CIDR）、ポート/プロトコルは対象に限定。可能なら **Service Tag**（例 AzureFrontDoor.Backend）や **FQDN ルール**、**プライベートエンドポイント**で代替を提示。
 - **優先度衝突の回避**: 既存規則の priority を確認し、衝突しない未使用 priority を提案。App Service は既定アクションとの整合を確認。
 - **considerations[]（何を判断すべきか）**の例: 送信元は単一 IP か CIDR か / ポート・プロトコルを限定できるか / Service Tag・FQDN で代替できないか / 既存規則と優先度が衝突しないか / 変更管理・監査・承認フローが必要か / 一時的か恒久的か（TTL 運用の要否）/ セキュリティ上のリスク（過剰公開・0.0.0.0/0 の回避）。

@@ -74,7 +74,7 @@ user-invocable: false
 - (9) **セクション保持**: index=`query`/`verdict`/`path-summary`/`top-proposal`、evaluation=`layer-summary`/`rule-detail`、proposal=`gap`/`proposals`、architecture=`path-diagram`/`not-on-path` の `<!-- SECTION: x -->` が全て存在。
 - (10) **テンプレ準拠**: 各 HTML に `<footer>` と `class="crumb"` が存在し、各テーブルの `<thead>` がテンプレートと一字一句一致。
 - (11) **判定クラスの妥当**: 判定ピルの class が `dec-Allow`/`dec-Deny`/`dec-NA` のいずれか、総合判定バッジが `v-Allowed`/`v-Denied` のいずれか（ラベル直書きや空クラスなし・大文字小文字を区別して検査）。
-- (12) **整合**: `summary.overallDecision` が `overall.decision` と一致。`gap.meets=false` かつ `desiredState≠CheckOnly` なら `proposals` が 1 件以上・proposal.html にブロックが描画されている。
+- (12) **整合**: `summary.overallDecision` が `overall.decision` と一致。`gap.meets=false` かつ `desiredState≠CheckOnly` なら `proposals` が 1 件以上・proposal.html にブロックが描画されている。**許可したい（`desiredState=Allow`）で `overall.decision=Denied` のときは、`proposals[].layer` が全 Deny レイヤ（`pathLayers` の `decision=Deny`）を漏れなくカバー**（不備なら evaluator へ差し戻し）。
 - (13) **矢印**: architecture.html に末尾の余分な `&rarr;`（対象ノード直後の孤立矢印）が無い。
 - (14) **進捗**: `progress.md` が存在し、全チェックボックス（手順 1〜7・ゲート G0〜G3・反スクリプト宣言・テンプレ準拠チェック）が `[x]`（未チェックが 0 件）。先頭コメントは削除済み。
 - (15) **一時ファイルなし**: `temp-*.*` や `findings-*.json`（別名）が 0 件で、成果物が HTML 4 / CSV 1 / `findings.json` / `progress.md` のみ。
@@ -91,6 +91,8 @@ user-invocable: false
   $badDec=@($j.pathLayers | Where-Object { $_.applicable -eq $true -and [string]::IsNullOrWhiteSpace($_.decision) }).Count
   if($badDec -ne 0){ "NG: decision 未確定の applicable レイヤ=$badDec（evaluator へ差し戻し）" }  # 出力なし期待
   if($j.gap.meets -eq $false -and $j.query.desiredState -ne 'CheckOnly' -and @($j.proposals).Count -lt 1){ "NG: meets=false かつ desiredState≠CheckOnly なのに proposals が 0 件" }  # 出力なし期待
+  if($j.query.desiredState -eq 'Allow' -and $j.overall.decision -eq 'Denied'){ $denyLayers=@($j.pathLayers | Where-Object { $_.decision -eq 'Deny' } | ForEach-Object { $_.layer }); $propLayers=@($j.proposals | ForEach-Object { $_.layer }); $uncovered=@($denyLayers | Where-Object { $_ -notin $propLayers }); if($uncovered.Count -gt 0){ "NG: 許可希望なのに提案未網羅の Deny レイヤ=$($uncovered -join ',')（全 Deny レイヤ分の提案が必要）" } }  # 出力なし期待（全 Deny レイヤを提案がカバー）
+  $eng=@($j.pathLayers | Where-Object { $_.reason -match '^[\x00-\x7F\s]*[A-Za-z]{4,}[\x00-\x7F\s]*$' -and $_.reason -notmatch '[\u3040-\u30ff\u4e00-\u9fff]' }).Count; if($eng -gt 0 -or ($j.overall.reason -and $j.overall.reason -notmatch '[\u3040-\u30ff\u4e00-\u9fff]')){ "NG: 日本語でない説明文（reason/overall.reason）がある=pathLayers $eng 件" }  # 出力なし期待（reason は日本語）
   $req=@{'index.html'=@('query','verdict','path-summary','top-proposal');'evaluation.html'=@('layer-summary','rule-detail');'proposal.html'=@('gap','proposals');'architecture.html'=@('path-diagram','not-on-path')}; foreach($f in $req.Keys){ $c=Get-Content -Raw "$d/$f"; foreach($s in $req[$f]){ if($c -notmatch "SECTION: $s"){ "NG: $f にセクション $s が無い" } } }  # 出力なし期待
   foreach($p in 'index.html','evaluation.html','proposal.html','architecture.html'){ $h=Get-Content -Raw "$d/$p"; "$p footer=$([bool]($h -match '<footer'))/crumb=$([bool]($h -match 'class=\"crumb\"'))" }  # 各 True/True 期待
   $tpl='usecases/003-network-access-evaluation/report-template'; foreach($f in 'index.html','evaluation.html','proposal.html','architecture.html'){ $a=([regex]::Matches((Get-Content -Raw "$tpl/$f"),'<thead><tr>.*?</tr></thead>').Value) -join ''; $b2=([regex]::Matches((Get-Content -Raw "$d/$f"),'<thead><tr>.*?</tr></thead>').Value) -join ''; if($a -ne $b2){ "NG: $f の <thead> がテンプレと不一致" } }  # 出力なし期待

@@ -40,7 +40,7 @@
 - レイヤが対象リソースに存在しない場合は `applicable=false`・判定 `NA`（総合判定に影響しない）。
 - **総合判定 = 全 applicable レイヤの AND**。いずれかのレイヤが `Deny` なら総合 `Denied`（最初の拒否レイヤを `overall.matchedLayer`）。全レイヤ `Allow` なら総合 `Allowed`。
 - **ポート未指定**（`query.port=null`）のときは全ポート前提で評価し、レポートに「全ポート前提」と注記する。
-- **desiredState** が `Allow`/`Deny` で現状（overall）と異なる場合のみ `gap.meets=false` とし、担当レイヤ別に `proposals[]`（考慮事項チェックリスト＋az/Bicep）を生成する。`CheckOnly` または期待を満たす場合は提案なし（フォールバック表示）。
+- **desiredState** が `Allow`/`Deny` で現状（overall）と異なる場合のみ `gap.meets=false` とし、担当レイヤ別に `proposals[]`（考慮事項チェックリスト＋az/Bicep）を生成する。**AND の非対称性**: 許可したい（現状 Denied）は**全 Deny レイヤ**を変えないと通らないので `responsibleLayers`＝全 Deny レイヤ・提案は全 Deny レイヤを網羅（1 レイヤだけにしない）。拒否したい（現状 Allowed）はいずれか 1 レイヤで塞げるので最小変更の 1 レイヤ提案で可。`CheckOnly` または期待を満たす場合は提案なし（フォールバック表示）。
 - 提案は **最小権限**（送信元は最小範囲＝単一 IP / 最小 CIDR、ポート・プロトコルは限定、可能なら Service Tag / FQDN / プライベートエンドポイントで代替）を原則とする。az / Bicep は**コピー用の提案であり実行しない**。
 
 ## 生成手順（読み込み → 置換 → 検証ゲート）
