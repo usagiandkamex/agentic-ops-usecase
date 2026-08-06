@@ -29,13 +29,13 @@
   },
   "query": {
     "endpointInput": "{{ENDPOINT_INPUT}}",
-    "inputType": "IP",
+    "inputType": "{{INPUT_TYPE}}",
     "resolvedIps": [],
-    "fqdn": "",
-    "direction": "Inbound",
-    "port": null,
-    "protocol": "Any",
-    "desiredState": "CheckOnly"
+    "fqdn": "{{FQDN}}",
+    "direction": "{{DIRECTION}}",
+    "port": {{PORT}},
+    "protocol": "{{PROTOCOL}}",
+    "desiredState": "{{DESIRED_STATE}}"
   },
   "capabilityDetection": {
     "resourceGraph": "利用可",
