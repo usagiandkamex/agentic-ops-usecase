@@ -1,0 +1,2 @@
+timestamp,resourceName,resourceType,type,severity,title,durationMinutes,status,source
+{{INCIDENT_ROWS}}

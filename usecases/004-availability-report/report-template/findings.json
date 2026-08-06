@@ -1,0 +1,212 @@
+{
+  "_comment": "ユースケース004 定期稼働報告の中核成果物（単一のデータ源）。エージェント(azure-availability-reporter)が手順3で作り始め、手順4で確定する。HTML/CSV はこの実データから生成する。このテンプレは参照元。実値に置換し、配列は実データ件数だけ複製する。BOM 不要。reports/<YYYYMMDD-HHmmss>/findings.json はローカル限定（.gitignore 済み）。",
+  "metadata": {
+    "generatedAt": "{{META_DATETIME}}",
+    "period": {
+      "type": "monthly",
+      "label": "{{PERIOD_LABEL}}",
+      "start": "{{PERIOD_START}}",
+      "end": "{{PERIOD_END}}"
+    },
+    "scope": "{{META_SCOPE}}",
+    "tenantId": "{{TENANT_ID}}",
+    "subscriptionName": "{{SUBSCRIPTION_NAME}}",
+    "subscriptionId": "{{SUBSCRIPTION_ID}}",
+    "resourceGroup": "{{RESOURCE_GROUP}}",
+    "collectionMethod": "{{COLLECTION_METHOD}}",
+    "slaTargetsInput": {
+      "provided": true,
+      "path": "sla-targets.csv",
+      "note": "システムの SLA / 稼働率目標（非機能要求グレードで定義した構築中システム自身の目標値）の入力元。Azure サービスの公表 SLA ではない。未提供なら各 availability[].slaTarget は null とし、目標達成判定はしない（公表 SLA で代替しない）。"
+    },
+    "capabilities": {
+      "resourceHealth": "利用可/未確認",
+      "azureMonitorMetrics": "利用可/未確認",
+      "activityLog": "利用可/未確認",
+      "alerts": "利用可/未確認",
+      "backup": "利用可/未確認"
+    }
+  },
+  "summary": {
+    "totalResources": 0,
+    "overallAvailabilityPct": 0,
+    "slaMetCount": 0,
+    "slaBreachedCount": 0,
+    "incidentCount": 0,
+    "alertCount": 0,
+    "unresolvedAlertCount": 0,
+    "monitoringCoveragePct": 0,
+    "statusHighlight": ""
+  },
+  "inventory": [
+    {
+      "resourceId": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.Compute/virtualMachines/<RESOURCE_NAME>",
+      "resourceName": "<RESOURCE_NAME>",
+      "resourceType": "Microsoft.Compute/virtualMachines",
+      "category": "Compute",
+      "location": "<REGION>"
+    }
+  ],
+  "availability": [
+    {
+      "resourceName": "<RESOURCE_NAME>",
+      "resourceType": "Microsoft.Compute/virtualMachines",
+      "period": "{{PERIOD_LABEL}}",
+      "availabilityPct": 99.95,
+      "slaTarget": 99.9,
+      "slaTargetSource": "sla-targets.csv (scope=system)",
+      "rtoTargetMinutes": 240,
+      "rpoTargetMinutes": 60,
+      "slaMet": true,
+      "downtimeMinutes": 21,
+      "method": "Resource Health availabilityStatuses の集計（目安）",
+      "source": "Resource Graph healthresources / Activity Log(ResourceHealth)",
+      "note": "slaTarget はシステムの SLA 目標（非機能要求グレード入力・sla-targets.csv 由来）で Azure 公表 SLA ではない。未入力なら slaTarget=null・slaMet=null とし判定しない。"
+    }
+  ],
+  "incidents": [
+    {
+      "timestamp": "2026-07-12T03:14:00+09:00",
+      "resourceName": "<RESOURCE_NAME>",
+      "resourceType": "Microsoft.Compute/virtualMachines",
+      "type": "ResourceHealth",
+      "severity": "High",
+      "title": "リソースが Unavailable に遷移（プラットフォーム起因）",
+      "durationMinutes": 18,
+      "status": "Resolved",
+      "source": "Activity Log(ResourceHealth)"
+    }
+  ],
+  "alerts": [
+    {
+      "firedAt": "2026-07-20T22:05:00+09:00",
+      "resourceName": "<RESOURCE_NAME>",
+      "alertName": "CPU High",
+      "severity": "Sev2",
+      "state": "Acknowledged",
+      "monitorCondition": "Fired",
+      "source": "alertsmanagementresources"
+    }
+  ],
+  "operationsChecklist": [
+    {
+      "id": "OPS-01",
+      "gradeCategory": "運用・保守性 / 通常運用",
+      "gradeItem": "運用監視（システム監視）",
+      "checkItem": "全リソースに診断設定（Log Analytics 送信）があるか",
+      "status": "要確認",
+      "target": "対象RGの主要リソース",
+      "note": "診断設定なしのリソースは監視カバレッジから欠落",
+      "referenceUrl": "https://learn.microsoft.com/azure/azure-monitor/essentials/diagnostic-settings"
+    },
+    {
+      "id": "OPS-02",
+      "gradeCategory": "運用・保守性 / 通常運用",
+      "gradeItem": "運用監視（アラート通知）",
+      "checkItem": "可用性/稼働に関するメトリックアラートが設定されているか",
+      "status": "要確認",
+      "target": "対象RGの主要リソース",
+      "note": "",
+      "referenceUrl": "https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-overview"
+    },
+    {
+      "id": "OPS-03",
+      "gradeCategory": "運用・保守性 / 通常運用",
+      "gradeItem": "バックアップ",
+      "checkItem": "バックアップ対象リソースに保護（Backup/保持）が設定されているか",
+      "status": "要確認",
+      "target": "VM / マネージドDB / ファイル",
+      "note": "設定有無のみを点検（バックアップの実行・復元はしない）",
+      "referenceUrl": "https://learn.microsoft.com/azure/backup/backup-overview"
+    },
+    {
+      "id": "OPS-04",
+      "gradeCategory": "可用性 / 耐障害性",
+      "gradeItem": "冗長構成（可用性ゾーン/冗長）",
+      "checkItem": "重要リソースが可用性ゾーン/冗長構成になっているか",
+      "status": "要確認",
+      "target": "対象RGの主要リソース",
+      "note": "",
+      "referenceUrl": "https://learn.microsoft.com/azure/reliability/availability-zones-overview"
+    }
+  ],
+  "slaSummary": {
+    "_comment": "slaTarget はシステムの SLA 目標（sla-targets.csv 入力・非機能要求グレード）。Azure 公表 SLA ではない。種別に入力目標が無ければ slaTarget=null。",
+    "byType": [
+      {
+        "resourceType": "Microsoft.Compute/virtualMachines",
+        "slaTarget": 99.9,
+        "avgAvailabilityPct": 99.95,
+        "metCount": 1,
+        "breachedCount": 0
+      }
+    ]
+  },
+  "nfrGradeMapping": [
+    {
+      "gradeId": "A.1",
+      "gradeCategory": "可用性 / 継続性",
+      "gradeItem": "運用スケジュール・稼働率",
+      "coveredBy": "availability（リソース別稼働率）/ slaSummary",
+      "note": "非機能要求グレード2018 付録の該当項目に紐付け"
+    },
+    {
+      "gradeId": "A.2",
+      "gradeCategory": "可用性 / 耐障害性・回復性",
+      "gradeItem": "目標復旧水準・障害検知",
+      "coveredBy": "incidents（期間内の障害/復旧）",
+      "note": ""
+    },
+    {
+      "gradeId": "C.1",
+      "gradeCategory": "運用・保守性 / 通常運用",
+      "gradeItem": "運用監視・バックアップ",
+      "coveredBy": "operationsChecklist（監視カバレッジ/バックアップ設定）",
+      "note": ""
+    }
+  ],
+  "collectionPlan": [
+    {
+      "task": "Inventory:authoritativeResourceEnumeration",
+      "requiredBy": "常時（az resource list）",
+      "dueStep": 3,
+      "status": "pending",
+      "evidence": { "query": "az resource list -g <RG> -o json", "resultCount": null, "collectedAt": "", "note": "件数正典" }
+    },
+    {
+      "task": "ResourceHealth:availabilityStatuses",
+      "requiredBy": "resourceHealth=利用可",
+      "dueStep": 3,
+      "status": "pending",
+      "evidence": { "query": "Resource Graph healthresources", "resultCount": null, "collectedAt": "", "note": "" }
+    },
+    {
+      "task": "Metrics:availability",
+      "requiredBy": "azureMonitorMetrics=利用可",
+      "dueStep": 3,
+      "status": "pending",
+      "evidence": { "query": "az monitor metrics list（種別別の可用性メトリック）", "resultCount": null, "collectedAt": "", "note": "期間集計" }
+    },
+    {
+      "task": "ActivityLog:incidents",
+      "requiredBy": "activityLog=利用可",
+      "dueStep": 3,
+      "status": "pending",
+      "evidence": { "query": "az monitor activity-log list --start-time --end-time", "resultCount": null, "collectedAt": "", "note": "期間内の障害/停止イベント" }
+    },
+    {
+      "task": "Alerts:fired",
+      "requiredBy": "alerts=利用可",
+      "dueStep": 3,
+      "status": "pending",
+      "evidence": { "query": "Resource Graph alertsmanagementresources", "resultCount": null, "collectedAt": "", "note": "期間内の発火アラート" }
+    },
+    {
+      "task": "Ops:monitoringCoverage",
+      "requiredBy": "常時",
+      "dueStep": 4,
+      "status": "pending",
+      "evidence": { "query": "az monitor diagnostic-settings list（リソース別）", "resultCount": null, "collectedAt": "", "note": "診断設定/アラート/バックアップ設定の有無" }
+    }
+  ]
+}

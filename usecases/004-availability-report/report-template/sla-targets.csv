@@ -1,0 +1,19 @@
+# 入力ファイル: システムの SLA / 稼働率目標（非機能要求グレードで定義した「構築中システム自身」の目標値）
+# 重要: ここに書くのは Azure サービスの公表 SLA ではなく、対象システムの非機能要求として定義した目標値。
+# 使い方:
+#   - 対象システムの目標に合わせてこのファイルを編集し、エージェントに入力として渡す（実行フォルダ reports/<...>/ にコピーして値を埋める、またはパスを指定する）。
+#   - '#' で始まる行はコメントとして無視される。ヘッダ行以降がデータ。
+#   - エージェントはこのファイルを read_file で読み、availability[].slaTarget / rtoTargetMinutes / rpoTargetMinutes の入力元にする。
+#   - 未入力（該当行なし）のリソースは、レポートの目標列を「未入力（要指定）」と表示し、達成判定はしない（Azure 公表 SLA で代替しない）。
+# 列:
+#   scope             = system | resourceType | resourceName（適用範囲）
+#   identifier        = system は *、resourceType は種別文字列（例 Microsoft.Sql/servers/databases）、resourceName はリソース名
+#   availabilityTargetPct = 目標稼働率(%)（例 99.9）
+#   rtoMinutes        = 目標復旧時間 RTO(分)（任意・非機能要求グレードの目標復旧水準）
+#   rpoMinutes        = 目標復旧時点 RPO(分)（任意）
+#   note              = 備考
+# 優先順位（同一リソースに複数該当する場合）: resourceName > resourceType > system
+scope,identifier,availabilityTargetPct,rtoMinutes,rpoMinutes,note
+system,*,99.9,240,60,システム全体の既定目標（非機能要求グレードで定義した値に置き換える）
+resourceType,Microsoft.Sql/servers/databases,99.95,60,15,DB は復旧目標が厳しい（例）
+resourceName,<RESOURCE_NAME>,99.99,30,5,重要フロントの個別目標（例）

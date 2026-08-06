@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<!--
+  定期稼働報告レポート — index.html テンプレート（ユースケース 004）
+  使い方:
+  - エージェント(azure-availability-reporter)はこの HTML を read_file で読み、下記トークンを findings.json の実値に置換して create_file で生成する（HTML を自作しない・外部スクリプト不要）。
+  - 出力フォルダ: reports/<YYYYMMDD-HHmmss>/ に index.html / availability.html / incidents.html / operations.html を出力。
+  - <!-- BEGIN X --> 〜 <!-- END X --> は内部の行を雛形に実データで複製する。スタイル・クラス名・構造は変えない（自己完結・インライン CSS）。
+  - このテンプレは参照元。read_file で読み {{TOKEN}} 置換と BEGIN/END 行複製だけで完成させ create_file で 1 回書き出す（複製→編集しない・生成スクリプト不要）。<style> ブロック・<header> の <span class="crumb">・<footer> を削除・簡略化しない。各テーブルの <thead>（ラベル・列数・列順）を改変しない。
+  - <!-- SECTION: name --> アンカーは各 <h2> セクションの必須マーカー。削除・改名しない（消してよいのは先頭コメントブロックのみ。検証ゲートがアンカー残存を機械チェックする）。
+  - 出力に {{...}} や BEGIN/END マーカー、この先頭コメントを残さないこと。
+  トークン: META_DATETIME(JST) / PERIOD_LABEL / META_SCOPE / TENANT_ID / SUBSCRIPTION_NAME / SUBSCRIPTION_ID / RESOURCE_GROUP / COLLECTION_METHOD
+           CAP_RESOURCE_HEALTH / CAP_METRICS / CAP_ACTIVITY_LOG / CAP_ALERTS / CAP_BACKUP
+           OVERALL_VAL / OVERALL_COL(var(--good|warn|bad)) / OVERALL_PILL_CLASS(good|warn|bad) / OVERALL_LABEL
+           TOTAL_RESOURCES / SLA_MET / SLA_BREACHED / INCIDENT_COUNT / UNRESOLVED_ALERTS / MONITORING_COVERAGE / STATUS_HIGHLIGHT
+  区域: TOP_INCIDENT_ROWS（期間内の主なインシデント/アラート・重大度順の抜粋）
+  サマリのカード（TOTAL_RESOURCES / SLA_MET / SLA_BREACHED / INCIDENT_COUNT / UNRESOLVED_ALERTS 等）は 0 でも数値 0 を表示する（「該当なし」と書かない）。
+  空区域の扱い（重要）: 区域が 0 件でも <h2>・テーブルを削除しない。tbody を空にせず、下記フォールバック行を 1 行だけ出力する。
+    - TOP_INCIDENT_ROWS 0 件: <tr><td colspan="5" class="empty">該当なし（期間内のインシデント/発火アラートはありません）</td></tr>
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>定期稼働報告レポート</title>
+<style>
+  :root{--blue:#0078D4;--dark:#243A5E;--bg:#faf9f8;--card:#fff;--bd:#edebe9;--tx:#201f1e;--sub:#605e5c;--good:#107C10;--warn:#F7A600;--bad:#D13438;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","Yu Gothic UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);font-size:14px;line-height:1.5}
+  header.topbar{background:linear-gradient(90deg,var(--dark),var(--blue));color:#fff;padding:14px 28px;display:flex;align-items:center;gap:12px}
+  header.topbar h1{font-size:18px;font-weight:600;margin:0}
+  header.topbar .crumb{margin-left:auto;font-size:12px;opacity:.9}
+  main{max-width:1120px;margin:0 auto;padding:24px 28px 48px}
+  nav.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px}
+  nav.tabs a{padding:8px 14px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--blue);text-decoration:none;font-weight:600;font-size:13px}
+  nav.tabs a.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .meta{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 24px;margin-bottom:24px}
+  .meta div{font-size:13px}.meta .k{color:var(--sub);margin-right:6px}
+  .meta code{background:#f3f2f1;padding:1px 6px;border-radius:4px}
+  h2{font-size:16px;font-weight:600;margin:28px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  .overview{display:flex;flex-wrap:wrap;gap:20px;align-items:center;margin-bottom:8px}
+  .gauge{--val:0;--col:var(--warn);width:104px;height:104px;border-radius:50%;flex:0 0 auto;background:conic-gradient(var(--col) calc(var(--val)*1%),var(--bd) 0);display:grid;place-items:center}
+  .gauge::before{content:"";position:relative;width:78px;height:78px;background:var(--card);border-radius:50%;grid-area:1/1}
+  .gauge .val{grid-area:1/1;z-index:1;text-align:center}
+  .gauge .val b{font-size:22px;font-weight:700;display:block;line-height:1}
+  .gauge .val small{font-size:11px;color:var(--sub)}
+  .cards{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:8px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px 18px;min-width:150px;flex:1 1 150px}
+  .card .n{font-size:26px;font-weight:700;line-height:1}
+  .card .l{font-size:12px;color:var(--sub);margin-top:4px}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:8px;overflow:hidden;margin:6px 0 20px;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd);vertical-align:top}
+  th{background:#f3f2f1;font-weight:600;color:var(--sub)}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#fff}
+  .sev-Critical,.sev-High,.sev-Sev0,.sev-Sev1{background:var(--bad)}.sev-Medium,.sev-Sev2{background:var(--warn)}.sev-Low,.sev-Sev3,.sev-Sev4{background:var(--good)}
+  .st{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600}
+  .st.good{background:#dff6dd;color:var(--good)}.st.warn{background:#fff4ce;color:#8a6100}.st.bad{background:#fde7e9;color:var(--bad)}
+  a{color:var(--blue)}
+  .note{color:var(--sub);font-size:12px;margin:4px 0 16px}
+  td.empty{text-align:center;color:var(--sub);font-style:italic}
+  footer{color:var(--sub);font-size:12px;margin-top:32px;border-top:1px solid var(--bd);padding-top:12px}
+</style>
+</head>
+<body>
+<header class="topbar"><h1>定期稼働報告レポート</h1><span class="crumb">READ 専用 / Reader 権限 · 非機能要求グレード 可用性・運用保守性</span></header>
+<main>
+  <nav class="tabs">
+    <a class="active" href="index.html">概要</a>
+    <a href="availability.html">稼働率 / 可用性</a>
+    <a href="incidents.html">インシデント / アラート</a>
+    <a href="operations.html">運用点検</a>
+  </nav>
+
+  <div class="meta">
+    <div><span class="k">報告作成日時(JST)</span>{{META_DATETIME}}</div>
+    <div><span class="k">対象期間</span>{{PERIOD_LABEL}}</div>
+    <div><span class="k">対象スコープ</span>{{META_SCOPE}}</div>
+    <div><span class="k">テナント ID</span><code>{{TENANT_ID}}</code></div>
+    <div><span class="k">サブスクリプション</span>{{SUBSCRIPTION_NAME}} <code>{{SUBSCRIPTION_ID}}</code></div>
+    <div><span class="k">リソースグループ</span>{{RESOURCE_GROUP}}</div>
+    <div><span class="k">収集手段</span>{{COLLECTION_METHOD}}</div>
+    <div><span class="k">Resource Health</span>{{CAP_RESOURCE_HEALTH}}</div>
+    <div><span class="k">Azure Monitor メトリック</span>{{CAP_METRICS}}</div>
+    <div><span class="k">アクティビティログ</span>{{CAP_ACTIVITY_LOG}}</div>
+    <div><span class="k">アラート</span>{{CAP_ALERTS}}</div>
+    <div><span class="k">バックアップ</span>{{CAP_BACKUP}}</div>
+  </div>
+  <p class="note">READ 操作のみを実施（書き込み・削除・再起動・メトリック/スキャンのトリガーは行っていない）。稼働率は情報源の粒度に依存する<strong>目安</strong>で、<strong>SLA 目標は非機能要求グレードで定義したシステム自身の目標値（入力 sla-targets.csv）</strong>で Azure 公表 SLA ではない（未入力は目標未定として判定しない）。</p>
+
+  <!-- SECTION: summary -->
+  <h2>総合サマリ</h2>
+  <div class="overview">
+    <div class="gauge" style="--val:{{OVERALL_VAL}};--col:{{OVERALL_COL}};">
+      <span class="val"><b>{{OVERALL_VAL}}</b><small>%</small></span>
+    </div>
+    <div>
+      <div style="font-size:13px;color:var(--sub);font-weight:600">総合可用性（対象期間の平均・目安）</div>
+      <span class="st {{OVERALL_PILL_CLASS}}">{{OVERALL_LABEL}}</span>
+    </div>
+  </div>
+  <div class="cards">
+    <div class="card"><div class="n">{{TOTAL_RESOURCES}}</div><div class="l">対象リソース総数</div></div>
+    <div class="card"><div class="n">{{SLA_MET}}</div><div class="l">SLA 達成（目標比）</div></div>
+    <div class="card"><div class="n">{{SLA_BREACHED}}</div><div class="l">SLA 未達（目標比）</div></div>
+    <div class="card"><div class="n">{{INCIDENT_COUNT}}</div><div class="l">期間内インシデント</div></div>
+    <div class="card"><div class="n">{{UNRESOLVED_ALERTS}}</div><div class="l">未解決アラート</div></div>
+    <div class="card"><div class="n">{{MONITORING_COVERAGE}}</div><div class="l">監視カバレッジ(%)</div></div>
+  </div>
+
+  <!-- 総評 -->
+  <div style="background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px 18px;margin:8px 0 20px">
+    <h3 style="font-size:15px;margin:0 0 8px;padding-left:9px;border-left:4px solid var(--good)">総評</h3>
+    <p style="margin:0;font-size:13px">{{STATUS_HIGHLIGHT}}</p>
+  </div>
+
+  <!-- SECTION: top-incidents -->
+  <h2>主なインシデント / アラート（重大度順・抜粋）</h2>
+  <table>
+    <thead><tr><th>発生時刻</th><th>対象</th><th>種別</th><th>重大度</th><th>内容 / 状態</th></tr></thead>
+    <tbody>
+      <!-- BEGIN TOP_INCIDENT_ROWS -->
+      <tr><td>{{TIMESTAMP}}</td><td>{{RESOURCE_NAME}}</td><td>{{TYPE}}</td><td><span class="pill sev-{{SEVERITY}}">{{SEVERITY}}</span></td><td>{{TITLE}}（{{STATUS}}）</td></tr>
+      <!-- END TOP_INCIDENT_ROWS -->
+    </tbody>
+  </table>
+  <p class="note">詳細は <a href="availability.html">稼働率 / 可用性</a>・<a href="incidents.html">インシデント / アラート</a>・<a href="operations.html">運用点検</a> の各ページを参照。</p>
+
+  <footer>
+    稼働率・SLA 達成状況は対象期間（{{PERIOD_LABEL}}）時点の情報で、情報源の粒度に依存する目安。SLA 目標はシステム側の入力値（sla-targets.csv・非機能要求グレードで定義）で Azure 公表 SLA ではない。本レポートはローカル限定（<code>.gitignore</code> 済み）。シークレット等の機微情報は記載しない。
+  </footer>
+</main>
+</body>
+</html>

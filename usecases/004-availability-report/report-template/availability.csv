@@ -1,0 +1,2 @@
+resourceName,resourceType,period,availabilityPct,slaTarget,slaTargetSource,rtoTargetMinutes,rpoTargetMinutes,slaMet,downtimeMinutes,method,source,note
+{{AVAILABILITY_ROWS}}
