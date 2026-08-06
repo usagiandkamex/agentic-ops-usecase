@@ -71,7 +71,7 @@
 
 - `create_file` は UTF-8 BOM なしで書き出す。Windows 版 Excel は BOM なし UTF-8 を Shift-JIS と誤認し日本語が化ける。
 - 対策: CSV は UTF-8 (BOM 付き) で保存する。書き出し後に PowerShell:
-  `$raw=Get-Content -Raw -Encoding utf8 $p; Set-Content -Path $p -Value $raw -Encoding utf8BOM -NoNewline`
+  `$p="<CSVファイルのパス>"; $raw=Get-Content -Raw -Encoding utf8 $p; Set-Content -Path $p -Value $raw -Encoding utf8BOM -NoNewline`
   先頭 3 バイトが 239,187,191 になれば OK。`findings.json` / HTML / `progress.md` は BOM 不要。
 
 ## 生成後チェック（例・端末の READ コマンド）

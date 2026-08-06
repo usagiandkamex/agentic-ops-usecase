@@ -3,7 +3,7 @@
   "metadata": {
     "generatedAt": "{{META_DATETIME}}",
     "period": {
-      "type": "monthly",
+      "type": "{{PERIOD_TYPE}}",
       "label": "{{PERIOD_LABEL}}",
       "start": "{{PERIOD_START}}",
       "end": "{{PERIOD_END}}"
