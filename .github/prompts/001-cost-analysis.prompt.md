@@ -6,6 +6,8 @@ agent: 'azure-resource-analyst'
 
 # コスト最適化分析（Cost Optimization Analysis）
 
+この prompt は `cost` を評価観点の事前選択として `azure-resource-analyst` Orchestrator に渡す。対象と観点の承認後、共通 Collector → `azure-cost-specialist` → fan-in → Report Writer の順で委譲する。複数観点が指定された場合、選択された Specialist は同一 fan-out フェーズで並列起動する。
+
 対象の Azure リソースを **コスト最適化** の観点で分析してください。
 分析は RG 単位で行います。対象は「テナント/サブスクリプション/RG（単一RG）」または「テナント/サブスクリプション（配下の全RG）」の2パターンです。未確定の場合は、現在のコンテキストを提示してどちらの対象かを確認し、承認を得てから分析します。
 
