@@ -18,7 +18,7 @@
 4. Orchestrator は全結果を検証後、Reliability、Security、Cost Optimization、Operational Excellence、Performance Efficiency の順で `findings.json` に直列統合する。
 5. G2 合格後、Orchestrator は `.work/` を削除する。Report Writer は統合済み `findings.json` だけを読む。
 
-柱別 JSON は `pillar`、`status`、`evidence`、`checklist`、`passCount`、`evaluatedCount`、`coveragePercent`、`label`、`strengths`、`improvements`、`limitations` を持ちます。`status` は `completed` または `downgraded` のみ G1 合格です。全 RG 分析では各行に `resourceGroup` を持たせ、RG×チェック項目を評価単位にします。
+柱別 JSON は `pillar`、`status`、`evidence[]`、`checklist[]`、`passCount`、`evaluatedCount`、`coveragePercent`、`label`、`strengths[]`、`improvements[]`、`limitations[]` を持ちます。`status` は `completed` または `downgraded` のみ G1 合格です。全 RG 分析では各行に `resourceGroup` を持たせ、RG×チェック項目を評価単位にします。
 
 Collector の `resources[].safeProperties` は分析に必要な allowlist 項目だけを保持し、ARM の任意 `properties`、シークレット、トークン、キー、接続文字列、資格情報、アプリ設定値、ユーザーデータを保存しません。`topology.nodes[]` と `edges[]` は RG 名を明示し、RG 間接続も根拠と両端 RG を保持します。
 
