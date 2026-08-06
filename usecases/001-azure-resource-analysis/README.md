@@ -69,7 +69,7 @@
 > **柱は並列、共有ファイルは直列**: Specialist は最終 `findings.json` や `progress.md` を変更せず、それぞれの専有中間 JSON だけを書き込みます。失敗した柱だけ最大 2 回再試行し、全柱の統合後に中間 `.work/` を削除します。
 
 > **成果物はテンプレート複製で作る**: HTML は `report-template/*.html` を読み込み、`findings.json` の実データでトークンを置換して書き出す。
-> **Python / PowerShell 等の生成スクリプト（`.py` / `.ps1` 等）は作らず・実行しない**（`Copy-Item` 等のシェルコピーでも作らない）。端末は ① Azure への READ 照会、② 保存フォルダ名の時刻取得（JST）、③ 認証・対象コンテキストの確認/設定（`az login` / `az account set` 等）の 3 用途にのみ使う。
+> **Python / PowerShell 等の生成スクリプト（`.py` / `.ps1` 等）は作らず・実行しない**（`Copy-Item` 等のシェルコピーでも作らない）。端末は ① Azure への READ 照会、② 保存フォルダ名の時刻取得（JST）、③ 認証・対象コンテキストの確認/設定（`az login` / `az account set` 等）、④ 生成済み JSON / HTML / ファイル構成の読み取り専用検証 の 4 用途にのみ使う。
 
 最後に、生成されたレポートを確認し、必要な改善タスクを起票する。
 
