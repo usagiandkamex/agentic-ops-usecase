@@ -35,7 +35,14 @@
 
 | 種別 | ファイル | VS Code での呼び出し | 役割 |
 | --- | --- | --- | --- |
-| エージェント | [.github/agents/001-azure-resource-analyst.agent.md](../../.github/agents/001-azure-resource-analyst.agent.md) | エージェント選択 `azure-resource-analyst` | Azure リソース分析に特化したエージェント |
+| Orchestrator | [.github/agents/001-azure-resource-analyst.agent.md](../../.github/agents/001-azure-resource-analyst.agent.md) | エージェント選択 `azure-resource-analyst` | 対象・観点の承認、並列委譲、ゲート、統合、完了報告 |
+| Collector | [.github/agents/001-resource-collector.agent.md](../../.github/agents/001-resource-collector.agent.md) | 直接呼び出し不可 | 共通リソースと実トポロジの READ 収集、`findings.json` 初期化 |
+| Specialist（信頼性） | [.github/agents/001-reliability-specialist.agent.md](../../.github/agents/001-reliability-specialist.agent.md) | 直接呼び出し不可 | Reliability の評価と専有中間 JSON |
+| Specialist（セキュリティ） | [.github/agents/001-security-specialist.agent.md](../../.github/agents/001-security-specialist.agent.md) | 直接呼び出し不可 | Security の評価と専有中間 JSON |
+| Specialist（コスト） | [.github/agents/001-cost-specialist.agent.md](../../.github/agents/001-cost-specialist.agent.md) | 直接呼び出し不可 | Cost Optimization の評価と専有中間 JSON |
+| Specialist（運用性） | [.github/agents/001-opex-specialist.agent.md](../../.github/agents/001-opex-specialist.agent.md) | 直接呼び出し不可 | Operational Excellence の評価と専有中間 JSON |
+| Specialist（性能） | [.github/agents/001-performance-specialist.agent.md](../../.github/agents/001-performance-specialist.agent.md) | 直接呼び出し不可 | Performance Efficiency の評価と専有中間 JSON |
+| Report Writer | [.github/agents/001-report-writer.agent.md](../../.github/agents/001-report-writer.agent.md) | 直接呼び出し不可 | 統合済み findings から HTML を生成・独立レビュー |
 | インストラクション | [.github/instructions/001-azure-ops.instructions.md](../../.github/instructions/001-azure-ops.instructions.md) | 自動適用 | Azure 分析時の共通ルール（読み取り専用・プレースホルダ化など） |
 | プロンプト（信頼性） | [.github/prompts/001-reliability-analysis.prompt.md](../../.github/prompts/001-reliability-analysis.prompt.md) | `/azure-reliability-analysis` | 信頼性・可用性の観点で分析 |
 | プロンプト（セキュリティ） | [.github/prompts/001-security-analysis.prompt.md](../../.github/prompts/001-security-analysis.prompt.md) | `/azure-security-analysis` | セキュリティの観点で分析 |
@@ -45,22 +52,24 @@
 
 ## 手順
 
-まず VS Code の GitHub Copilot Chat で、エージェント **`azure-resource-analyst`** を選択する（単一観点だけなら観点別プロンプト `/azure-cost-analysis` 等を使ってもよい）。
-以降、エージェントは次の **実行プロセス（手順 1 → 7）** を順に進める。**手順 1・2 の同意が得られるまでデータ収集・分析は開始しない**。承認後は、エラー・ブロッカーが無い限り自律的に手順 3〜7 を進める。
+まず VS Code の GitHub Copilot Chat で、Orchestrator **`azure-resource-analyst`** を選択する（単一観点だけなら観点別プロンプト `/azure-cost-analysis` 等を使ってもよい）。
+以降、Orchestrator は次の **実行プロセス（手順 1 → 7）** を進める。**手順 1・2 の同意が得られるまでデータ収集・分析は開始しない**。承認後は、エラー・ブロッカーが無い限り追加質問せず手順 3〜7 を完走する。
 
 | 手順 | 内容 | インプット | アウトプット |
 | --- | --- | --- | --- |
 | 1. 対象リソースの確認・同意（必須） | 分析範囲（単一 RG か、サブスク配下の全 RG か）と対象（テナント/サブスク/RG）を選択肢で確認・同意 | 利用者指示 / `az account show` / `az group list` | 確定した対象 |
 | 2. 評価観点の確認・同意（必須） | 5 観点のうち実施分を選択肢（複数選択可）で確認・同意 | 利用者指示 | 実施する観点 |
 | （最終確認） | 対象範囲・対象・観点を提示して実行承認を得る | 手順 1・2 の合意 | 実行承認 |
-| 3. データ収集 | Azure MCP（不可なら `az`）で照会系のみ実行し `findings.json` に記録 | 承認された対象・観点 | `findings.json`（収集データ） |
-| 4. 分析 | WAF チェックリストに沿って指摘・優先度・推奨・トレードオフ・根拠を作成 | `findings.json` | `findings.json`（評価・差し込み値を追記） |
-| 5. レポート生成 | テンプレートを読み込み `{{TOKEN}}`／`BEGIN/END` を実データで置換した完成 HTML を書き出す | テンプレ ＋ `findings.json` | `index.html`＋各ピラー＋`architecture.html` |
-| 6. 保存前レビュー | プレースホルダ残存・テンプレ準拠・リンク整合・サマリ整合・機密・構成図を自己点検 | 生成した HTML 群 | 修正済み HTML ＋ レビュー要約 |
-| 7. 保存・提示 | `reports/<YYYYMMDD-HHmmss>/` に保存し要点を提示 | 修正済み HTML 群 | レポートフォルダ ＋ 要約 |
+| 3. 共通収集 | Collector が Azure MCP（不可なら `az`）でリソースとトポロジを READ 収集 | 承認された対象・観点 | 初期 `findings.json` |
+| 4. 柱別並列分析 | 選択した Specialist を同一 fan-out で並列起動し、各柱が専有 `.work/<pillar>.json` を作成 | 共通 `findings.json` | 柱別評価、G1 結果 |
+| 5. 決定論的統合 | Orchestrator が WAF 正規順で柱結果を直列統合し、summary を確定して `.work/` を削除 | 全柱の G1 合格結果 | 完成 `findings.json`、G2 結果 |
+| 6. レポート生成・レビュー | Report Writer がテンプレートから HTML を生成し、リンク・数値・構成図・機密を独立レビュー | テンプレート＋完成 `findings.json` | `index.html`＋選択柱＋`architecture.html`、G3 結果 |
+| 7. 保存・提示 | Orchestrator が `progress.md` を完了し、生成物と要点を提示 | G0〜G3 合格結果 | レポートフォルダ＋要約 |
+
+> **柱は並列、共有ファイルは直列**: Specialist は最終 `findings.json` や `progress.md` を変更せず、それぞれの専有中間 JSON だけを書き込みます。失敗した柱だけ最大 2 回再試行し、全柱の統合後に中間 `.work/` を削除します。
 
 > **成果物はテンプレート複製で作る**: HTML は `report-template/*.html` を読み込み、`findings.json` の実データでトークンを置換して書き出す。
-> **Python / PowerShell 等の生成スクリプト（`.py` / `.ps1` 等）は作らず・実行しない**（`Copy-Item` 等のシェルコピーでも作らない）。端末は ① Azure への READ 照会、② 保存フォルダ名の時刻取得（JST）、③ 認証・対象コンテキストの確認/設定（`az login` / `az account set` 等）の 3 用途にのみ使う。
+> **Python / PowerShell 等の生成スクリプト（`.py` / `.ps1` 等）は作らず・実行しない**（`Copy-Item` 等のシェルコピーでも作らない）。端末は ① Azure への READ 照会、② 保存フォルダ名の時刻取得（JST）、③ 認証・対象コンテキストの確認/設定（`az login` / `az account set` 等）、④ 生成済み JSON / HTML / ファイル構成の読み取り専用検証 の 4 用途にのみ使う。
 
 最後に、生成されたレポートを確認し、必要な改善タスクを起票する。
 
@@ -91,7 +100,7 @@ HTML レポートは **Azure Portal 風デザイン** で、次のテンプレ�
 | 低 | Managed Disk | 未使用ディスク | 削除またはスナップショット化 | 復旧元データを失う可能性 | [WAF: コスト最適化](https://learn.microsoft.com/azure/well-architected/cost-optimization/) |
 ```
 
-> 生成されたレポートは `reports/<YYYYMMDD-HHmmss>/`（フォルダ）に保存されます（`index.html`（ダッシュボード）＋ 各ピラー `reliability/security/cost/opex/performance.html`＋ `architecture.html`。同日複数回でも上書きされません）。このフォルダは `.gitignore` 済み（ローカル限定）のため、レポート内ではプレースホルダではなく **実際の ID・リソース名** を記載します（上記のサンプルは公開用のため一般化）。シークレット等の機微情報はローカルでも記載しません。
+> 生成されたレポートは `reports/<YYYYMMDD-HHmmss>/` に保存されます（`index.html`＋選択した各ピラー＋`architecture.html`＋`findings.json`＋`progress.md`）。同日複数回でも上書きされません。中間 `.work/` は統合後に削除されます。このフォルダは `.gitignore` 済み（ローカル限定）のため、レポート内ではプレースホルダではなく **実際の ID・リソース名** を記載します（上記のサンプルは公開用のため一般化）。シークレット等の機微情報はローカルでも記載しません。
 
 ## 注意事項
 

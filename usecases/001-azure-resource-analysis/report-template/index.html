@@ -4,8 +4,8 @@
   Azure Resource Analysis Report — HTML template (Azure Portal-inspired).
 
   使い方 / Usage:
-  - エージェント(azure-resource-analyst)はこの index.html を そのまま複製し、下記トークンを実値に置換 してレポートを生成する（HTML を自作しない）。
-  - 出力は「フォルダ単位」: reports/<YYYYMMDD-HHmmss>/index.html + 各ピラー + architecture.html。
+  - azure-waf-report-writer はこの index.html を読み、下記トークンを実値に置換した完成 HTML を生成する（HTML を自作しない）。
+  - 出力は「フォルダ単位」: reports/<YYYYMMDD-HHmmss>/index.html + 選択した各ピラー + architecture.html。
     (.gitignore 済み・ローカル限定。フォルダごと無視される)
   - このテンプレート自体は公開ファイルのため、値はトークン/サンプル。
   - BEGIN X / END X の区域は、内部の行を雛形に実データで複製/置換する。

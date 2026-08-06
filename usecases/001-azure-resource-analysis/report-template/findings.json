@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "analysisDateTime": "{{META_DATETIME}}",
+    "collectionMethod": "{{COLLECTION_METHOD}}",
+    "selectedPillars": [],
+    "schemaVersion": "1.0"
+  },
+  "scope": {
+    "tenantId": "{{TENANT_ID}}",
+    "subscriptionId": "{{SUBSCRIPTION_ID}}",
+    "subscriptionName": "{{SUBSCRIPTION_NAME}}",
+    "analysisScope": "{{META_SCOPE}}",
+    "resourceGroups": []
+  },
+  "authoritativeEnumeration": {
+    "source": null,
+    "completed": false,
+    "resourceGroupCounts": [],
+    "count": 0
+  }
+  "resources": [],
+  "topology": {
+    "grouping": "resourceGroup",
+    "nodes": [],
+    "edges": []
+  },
+  "analyses": {
+    "reliability": { "status": "notSelected" },
+    "security": { "status": "notSelected" },
+    "cost": { "status": "notSelected" },
+    "opex": { "status": "notSelected" },
+    "performance": { "status": "notSelected" }
+  },
+  "summary": {
+    "overallCoveragePercent": null,
+    "label": null,
+    "strengthsHighlight": null,
+    "topIssues": []
+  }
+}
