@@ -1,0 +1,3 @@
+# このディレクトリには定期稼働報告(HTML/CSV/findings.json)が生成されます。
+# レポートは実環境のデータを含むため .gitignore で除外され、コミットされません。
+# This directory holds generated availability reports. Reports are gitignored (never committed).
