@@ -15,8 +15,9 @@
   "authoritativeEnumeration": {
     "source": null,
     "completed": false,
+    "resourceGroupCounts": [],
     "count": 0
-  },
+  }
   "resources": [],
   "topology": {
     "grouping": "resourceGroup",
