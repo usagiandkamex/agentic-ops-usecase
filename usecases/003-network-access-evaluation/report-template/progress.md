@@ -1,6 +1,6 @@
 <!--
   progress.md テンプレート（ユースケース 003）— 実行中の進捗トラッキング（ワークフロー遵守の強制）
-  役割: オーケストレーター（`azure-network-access-analyst`）が**起動直後（手順1の入力確認より前）**にこの雛形を read_file で読み、reports/<YYYYMMDD-HHmmss>/progress.md を create_file で作成し、
+  役割: オーケストレーター（`azure-network-access-analyst`）が**起動直後（手順2の入力確認より前）**にこの雛形を read_file で読み、reports/<YYYYMMDD-HHmmss>/progress.md を create_file で作成し、
         各手順の「切れ目」で `replace_string_in_file` により更新・自己検査してから次工程へ進む（オーケストレーターが手順1〜3、`azure-network-path-collector` が手順4・ゲート G0〜G1、`azure-network-access-evaluator` が手順5・ゲート G2、`azure-network-report-writer` が手順6〜7・ゲート G3 を更新）。これにより手順スキップ・テンプレ改変・スクリプト生成などの逸脱を可視化して防ぐ。
   使い方:
   - 各項目のチェックボックスは、完了したらスペースを x に更新する（未完了のままにしない）。ゲートも完了で x にする。
