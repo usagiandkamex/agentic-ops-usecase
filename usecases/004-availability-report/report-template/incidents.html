@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<!--
+  定期稼働報告レポート — incidents.html テンプレート（ユースケース 004）
+  使い方:
+  - エージェント(azure-availability-reporter)がこの HTML を read_file で読み、トークンを findings.json の実値に置換し、BEGIN/END 区域を実データ件数だけ複製して create_file で生成する。
+  - <style>・クラス名・<thead>（列ラベル/列数/列順）・<footer>・<span class="crumb"> を改変しない。<!-- SECTION: name --> アンカーは削除・改名しない。
+  - 出力に {{...}} や BEGIN/END マーカー、この先頭コメントを残さないこと。
+  トークン: META_DATETIME(JST) / PERIOD_LABEL / META_SCOPE
+  区域:
+    - INCIDENT_ROWS: 期間内インシデント（TIMESTAMP / RESOURCE_NAME / RESOURCE_TYPE / TYPE / SEVERITY / TITLE / DURATION_MIN / STATUS）
+    - ALERT_ROWS: 期間内の発火アラート（FIRED_AT / RESOURCE_NAME / ALERT_NAME / SEVERITY / STATE / MONITOR_CONDITION）
+  SEVERITY は sev-<値> クラスに使う（Critical/High/Medium/Low または Sev0..Sev4）。
+  空区域の扱い（重要・0 件でも <h2>/テーブルを残しフォールバック行を 1 行だけ出力）:
+    - INCIDENT_ROWS 0 件: <tr><td colspan="7" class="empty">該当なし（期間内のインシデントはありません）</td></tr>
+    - ALERT_ROWS 0 件: <tr><td colspan="6" class="empty">該当なし（期間内の発火アラートはありません）</td></tr>
+  収集を実施し実際に 0 件のときのみ「該当なし」。アクティビティログ/アラートが参照不可なら「確認不可（<capability> 未有効）」と明示する。
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>定期稼働報告 — インシデント / アラート</title>
+<style>
+  :root{--blue:#0078D4;--dark:#243A5E;--bg:#faf9f8;--card:#fff;--bd:#edebe9;--tx:#201f1e;--sub:#605e5c;--good:#107C10;--warn:#F7A600;--bad:#D13438;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","Yu Gothic UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);font-size:14px;line-height:1.5}
+  header.topbar{background:linear-gradient(90deg,var(--dark),var(--blue));color:#fff;padding:14px 28px;display:flex;align-items:center;gap:12px}
+  header.topbar h1{font-size:18px;font-weight:600;margin:0}
+  header.topbar .crumb{margin-left:auto;font-size:12px;opacity:.9}
+  main{max-width:1120px;margin:0 auto;padding:24px 28px 48px}
+  nav.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px}
+  nav.tabs a{padding:8px 14px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--blue);text-decoration:none;font-weight:600;font-size:13px}
+  nav.tabs a.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .meta{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 24px;margin-bottom:24px}
+  .meta div{font-size:13px}.meta .k{color:var(--sub);margin-right:6px}
+  h2{font-size:16px;font-weight:600;margin:28px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:8px;overflow:hidden;margin:6px 0 20px;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd);vertical-align:top}
+  th{background:#f3f2f1;font-weight:600;color:var(--sub)}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#fff}
+  .sev-Critical,.sev-High,.sev-Sev0,.sev-Sev1{background:var(--bad)}.sev-Medium,.sev-Sev2{background:var(--warn)}.sev-Low,.sev-Sev3,.sev-Sev4{background:var(--good)}
+  a{color:var(--blue)}
+  .note{color:var(--sub);font-size:12px;margin:4px 0 16px}
+  td.empty{text-align:center;color:var(--sub);font-style:italic}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  footer{color:var(--sub);font-size:12px;margin-top:32px;border-top:1px solid var(--bd);padding-top:12px}
+</style>
+</head>
+<body>
+<header class="topbar"><h1>定期稼働報告</h1><span class="crumb">READ 専用 / Reader 権限</span></header>
+<main>
+  <nav class="tabs">
+    <a href="index.html">概要</a>
+    <a href="availability.html">稼働率 / 可用性</a>
+    <a class="active" href="incidents.html">インシデント / アラート</a>
+    <a href="operations.html">運用点検</a>
+  </nav>
+
+  <div class="meta">
+    <div><span class="k">報告作成日時(JST)</span>{{META_DATETIME}}</div>
+    <div><span class="k">対象期間</span>{{PERIOD_LABEL}}</div>
+    <div><span class="k">対象スコープ</span>{{META_SCOPE}}</div>
+  </div>
+  <p class="note">期間内の Resource Health / Service Health イベント（アクティビティログ）と、発火したメトリック/ログアラートを一覧化。エージェントは既存の記録を READ 参照するのみで、アラートの生成・変更・解決は行わない。</p>
+
+  <!-- SECTION: incidents-list -->
+  <h2>期間内インシデント（Resource Health / Service Health）</h2>
+  <table>
+    <thead><tr><th>発生時刻</th><th>リソース名</th><th>種別</th><th>イベント種別</th><th>重大度</th><th>内容</th><th class="num">継続(分)</th></tr></thead>
+    <tbody>
+      <!-- BEGIN INCIDENT_ROWS -->
+      <tr><td>{{TIMESTAMP}}</td><td>{{RESOURCE_NAME}}</td><td>{{RESOURCE_TYPE}}</td><td>{{TYPE}}</td><td><span class="pill sev-{{SEVERITY}}">{{SEVERITY}}</span></td><td>{{TITLE}}（{{STATUS}}）</td><td class="num">{{DURATION_MIN}}</td></tr>
+      <!-- END INCIDENT_ROWS -->
+    </tbody>
+  </table>
+
+  <!-- SECTION: alerts-list -->
+  <h2>期間内の発火アラート</h2>
+  <table>
+    <thead><tr><th>発火時刻</th><th>リソース名</th><th>アラート名</th><th>重大度</th><th>状態</th><th>監視条件</th></tr></thead>
+    <tbody>
+      <!-- BEGIN ALERT_ROWS -->
+      <tr><td>{{FIRED_AT}}</td><td>{{RESOURCE_NAME}}</td><td>{{ALERT_NAME}}</td><td><span class="pill sev-{{SEVERITY}}">{{SEVERITY}}</span></td><td>{{STATE}}</td><td>{{MONITOR_CONDITION}}</td></tr>
+      <!-- END ALERT_ROWS -->
+    </tbody>
+  </table>
+  <p class="note">アラート重大度は Azure Monitor の Sev0（最重大）〜Sev4（情報）。未解決（New/Acknowledged）は概要ページの「未解決アラート」に計上。</p>
+
+  <footer>
+    インシデント/アラートは対象期間（{{PERIOD_LABEL}}）の記録。Service Health のメンテナンス/勧告も含む場合がある。本レポートはローカル限定（<code>.gitignore</code> 済み）。
+  </footer>
+</main>
+</body>
+</html>
