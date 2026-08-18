@@ -1,0 +1,65 @@
+# Weekly recompile of gh-aw agentic workflows to keep .lock.yml files in sync with their .md sources.
+name: Recompile Agentic Workflows
+
+on:
+  schedule:
+    # Every Monday 06:00 JST (Sunday 21:00 UTC)
+    - cron: "0 21 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write # required to ensure the PR label exists
+
+concurrency:
+  group: recompile-agentic-workflows
+  cancel-in-progress: false
+
+jobs:
+  recompile:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Unique branch per run so each drift opens a fresh pull request.
+      PR_BRANCH: chore/recompile-agentic-workflows-${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install gh-aw CLI
+        run: gh extension install github/gh-aw
+
+      - name: Recompile all workflows
+        run: gh aw compile --purge
+
+      - name: Detect drift
+        id: drift
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain -- '.github/workflows/*.lock.yml' '.github/aw/actions-lock.json' '.gitattributes')" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No generated file drift detected."
+          fi
+
+      - name: Open pull request on drift
+        if: steps.drift.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$PR_BRANCH"
+          git add -- '.github/workflows/*.lock.yml' '.github/aw/actions-lock.json' '.gitattributes'
+          git commit -m "chore: recompile agentic workflows"
+          git push origin "$PR_BRANCH"
+          gh label create automation --color 1D76DB --description "Automated maintenance" --force
+          gh pr create \
+            --base "${GITHUB_REF_NAME}" \
+            --head "$PR_BRANCH" \
+            --title "[recompile] agentic workflows の .lock.yml を再生成" \
+            --body $'週次スケジュールで `gh aw compile --purge` を実行し、`.md` ソースから `.lock.yml` を再生成した結果、差分が検出されました。\n\n- `.github/workflows/*.md` の未反映の変更、または gh-aw CLI の更新（action pin / container digest の更新）が原因です。\n- 内容を確認のうえマージしてください。' \
+            --label automation
