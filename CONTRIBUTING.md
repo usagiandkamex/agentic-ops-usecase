@@ -54,22 +54,6 @@ usecases/<NNN>-<usecase-name>/
 Select-String -Path .\usecases\**\*, .\docs\**\* -Pattern '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
 ```
 
-## 🔄 Agentic Workflow の週次再コンパイル設定
-
-`Recompile Agentic Workflows` は、週次または手動実行で生成ファイルを再コンパイルし、差分があれば PR を作成します。
-`.github/workflows/` 配下の更新には通常の `GITHUB_TOKEN` では権限が足りないため、管理者が専用トークンを設定してください。
-
-1. 対象をこのリポジトリに限定した Fine-grained PAT を作成し、以下の Repository permissions を付与する。
-   - Contents: Read and write
-   - Workflows: Read and write
-   - Pull requests: Read and write
-   - Issues: Read and write（`automation` ラベルの作成・更新用）
-2. リポジトリの **Settings → Secrets and variables → Actions** に、Repository secret `RECOMPILE_TOKEN` として登録する。
-3. 登録後、**Actions → Recompile Agentic Workflows → Run workflow** で手動実行し、差分がある場合に push と PR 作成が成功することを確認する。
-
-ワークフローは `GH_TOKEN` と `actions/checkout` の `token` に同じ `RECOMPILE_TOKEN` を指定し、`git push`・`gh label create`・`gh pr create` の認証を統一しています。
-`COPILOT_GITHUB_TOKEN` は `Documentation Sync` の Copilot CLI 用であり、再コンパイルには使用しません。トークンの実値はファイルに記載しないでください。
-
 ## ✍️ スタイル
 
 - ドキュメントは **日本語**、コード内コメントは **英語** を基本とする。

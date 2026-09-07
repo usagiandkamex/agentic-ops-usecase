@@ -54,6 +54,22 @@ IT 運用（Ops）の実務課題を、GitHub Copilot を中心としたエー�
 
 > VS Code でカスタムチャットモード（`.chatmode.md`）やプロンプトファイル（`.prompt.md`）を利用するには、GitHub Copilot 拡張機能が必要です。
 
+## 🔄 Agentic Workflow の週次再コンパイル設定
+
+`Recompile Agentic Workflows` は、週次または手動実行で生成ファイルを再コンパイルし、差分があれば PR を作成します。
+`.github/workflows/` 配下の更新には通常の `GITHUB_TOKEN` では権限が足りないため、管理者が専用トークンを設定してください。
+
+1. 対象をこのリポジトリに限定した Fine-grained PAT を作成し、以下の Repository permissions を付与する。
+   - Contents: Read and write
+   - Workflows: Read and write
+   - Pull requests: Read and write
+   - Issues: Read and write（`automation` ラベルの作成・更新用）
+2. リポジトリの **Settings → Secrets and variables → Actions** に、Repository secret `RECOMPILE_TOKEN` として登録する。
+3. 登録後、**Actions → Recompile Agentic Workflows → Run workflow** で手動実行し、差分がある場合に push と PR 作成が成功することを確認する。
+
+ワークフローは `GH_TOKEN` と `actions/checkout` の `token` に同じ `RECOMPILE_TOKEN` を指定し、`git push`・`gh label create`・`gh pr create` の認証を統一しています。
+`COPILOT_GITHUB_TOKEN` は `Documentation Sync` の Copilot CLI 用であり、再コンパイルには使用しません。トークンの実値はファイルに記載しないでください。
+
 ## 🔒 公開ポリシー
 
 本リポジトリは **Public** です。サブスクリプション ID・テナント ID・リソース名・個人情報・シークレット等の実値は含めず、必ずプレースホルダを使用してください。詳細は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
