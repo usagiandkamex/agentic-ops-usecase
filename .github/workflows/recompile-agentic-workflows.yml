@@ -24,6 +24,16 @@ jobs:
       # Unique branch per run so each drift opens a fresh pull request.
       PR_BRANCH: chore/recompile-agentic-workflows-${{ github.run_id }}
     steps:
+      - name: Validate required secrets
+        env:
+          RECOMPILE_TOKEN: ${{ secrets.RECOMPILE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RECOMPILE_TOKEN}" ]; then
+            echo "::error::Secret RECOMPILE_TOKEN is not set or is empty. Register it in the repository settings before running this workflow." >&2
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
