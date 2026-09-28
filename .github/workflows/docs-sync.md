@@ -6,6 +6,14 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# Keep OTLP telemetry variables out of the agent container: the endpoint and
+# headers carry credential material (populated from GH_AW_DEFAULT_OTLP_* secrets),
+# so exclude them from the --env-all invocation even though telemetry is emitted
+# on the host. Declaring them here keeps the exclusions surviving recompilation.
+excluded-env:
+  - OTEL_EXPORTER_OTLP_ENDPOINT
+  - OTEL_EXPORTER_OTLP_HEADERS
+  - GH_AW_OTLP_ENDPOINTS
 checkout:
   fetch-depth: 0  # full git history (matches GitHub's official gh-aw samples) so the agent can inspect recent commits
 safe-outputs:
