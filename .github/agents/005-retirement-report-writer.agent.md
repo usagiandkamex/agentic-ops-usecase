@@ -51,7 +51,7 @@ user-invocable: false
 - **シンク別にエスケープする**:
   - HTML 本文（`STATUS_HIGHLIGHT` / `SCOPE_LABEL` / `CATEGORY` / `QUARTER` 等）: `&` `<` `>` `"` `'` を `&amp;` `&lt;` `&gt;` `&quot;` `&#39;` に。
   - データアイランド（`EVENTS_JSON`）: 有効な JSON とし、文字列中の `<` `>` `&` を `\u003c` `\u003e` `\u0026` に。**アイランド内に生の `<` を 1 文字も残さない**。
-  - CSV: RFC 4180（カンマ・改行・`"` を含む値は `"` で囲み、内部の `"` は `""`）。テキスト列が `=` `+` `-` `@` で始まる場合は先頭に `'` を付ける（数式インジェクション対策）。
+  - CSV: RFC 4180（カンマ・改行・`"` を含む値は `"` で囲み、内部の `"` は `""`）。テキスト列が `=` `+` `-` `@` またはタブ（`\t`）・CR（`\r`）・LF（`\n`）で始まる場合は先頭に `'` を付ける（数式インジェクション対策。数値列 `daysRemaining` 等は対象外）。
 - **本文末尾のロジック用 `<script>` と CSP の `<meta>` は 1 文字も変えない**（CSP の sha256 ハッシュで許可しているため、改変すると JavaScript が動かなくなる）。データを `<script>` 本体に埋め込まない。
 
 ---
@@ -68,7 +68,7 @@ user-invocable: false
 2. 先頭コメント（`<!DOCTYPE html>` 直後の説明コメント）を削除し、`{{TOKEN}}` を `findings.json` の値で置換する。
    - メタ: `META_DATETIME`=`metadata.generatedAt` / `AS_OF_DATE`=`metadata.asOfDate` / `SCOPE_LABEL`=`metadata.scope.label` / `COLLECTION_METHOD`=`metadata.collectionMethod` / `CAP_MRC_MCP`=`metadata.capabilities.mrcMcp` / `CAP_RC_API`=`metadata.capabilities.releaseCommunicationsApi` / `CAP_LEARN_MCP`=`metadata.capabilities.learnMcp`
    - サマリ: `NOTICE_COUNT`=`summary.noticeCount` / `EVENT_COUNT`=`summary.eventCount` / `HIGH_COUNT`=`summary.highCount` / `MEDIUM_COUNT`=`summary.mediumCount` / `LOW_COUNT`=`summary.lowCount` / `NEEDS_REVIEW_COUNT`=`summary.needsReviewCount` / `WITHIN_90_COUNT`=`summary.within90DaysCount` / `RETIRED_COUNT`=`summary.retiredCount` / `DATE_CONFLICT_COUNT`=`summary.dateConflictCount` / `STATUS_HIGHLIGHT`=`summary.statusHighlight`
-   - 完全性: `RETIREMENTS_TOTAL`=`ledger.retirementsTotal.lastObserved` / `INSCOPE_COUNT`・`COMPLEMENT_COUNT`・`ENUM_CONSISTENT`（`はい` / `いいえ`）=`ledger.enumeration.*` / `CANDIDATE_COUNT`=`ledger.candidateNoticeIds` 件数 / `PREFILTERED_OUT_COUNT`=`ledger.prefilteredOut` 件数 / `WORKER_RETURNED_COUNT`=`ledger.workerReturnedNoticeIds` 件数 / `FAILED_COUNT`=`ledger.failedNoticeIds` 件数 / `OUT_OF_SCOPE_COUNT`=`ledger.outOfScopeAfterExtraction` 件数 / `MERGED_COUNT`=`ledger.mergedEvents` 件数
+   - 完全性: `RETIREMENTS_TOTAL`=`ledger.retirementsTotal.lastObserved` / `INSCOPE_COUNT`・`COMPLEMENT_COUNT`・`ENUM_CONSISTENT`（`はい` / `いいえ`）=`ledger.enumeration.*` / `CANDIDATE_COUNT`=`ledger.candidateNoticeIds` 件数 / `PREFILTERED_OUT_COUNT`=`ledger.prefilter.excludedCount` / `WORKER_RETURNED_COUNT`=`ledger.workerReturnedNoticeIds` 件数 / `FAILED_COUNT`=`ledger.failedNoticeIds` 件数 / `OUT_OF_SCOPE_COUNT`=`ledger.outOfScopeAfterExtraction` 件数 / `MERGED_COUNT`=`ledger.mergedEvents` 件数
    - `EVENTS_JSON`=`events` 配列**そのもの**（要素・キーを省略・改名・並べ替えしない）を R4 のとおりエスケープして埋め込む。
    - `CATEGORY_ROWS` / `QUARTER_ROWS` は `byCategory[]` / `byQuarter[]` を 1 要素 1 行で複製する（0 件はフォールバック行 1 行）。
 3. 完成内容を `reportFolder/index.html` に `create_file` する。**分割書き込みの契約**: `events` が 20 件を超える場合は、データアイランドの中身を一意センチネル `<!-- EVENTS_CHUNK_HERE -->` にして骨組みを書き出し、`events` と同順に**最大 20 件ずつ**「JSON 要素（先頭以外はカンマ区切り）＋センチネル」に置き換える編集で追記し、最後の編集で**センチネルを削除**する（`[` と `]` は骨組み側に置き、中身が連続した JSON 配列になること）。中断した場合は、アイランド内の最後の `eventId` の次から再開する（重複・欠落を作らない）。

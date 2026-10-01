@@ -9,8 +9,7 @@
       "label": "{{SCOPE_LABEL}}",
       "windowStart": "YYYY-MM-DD または null（下限なし）",
       "windowEnd": "YYYY-MM-DD または null（上限なし）",
-      "prefilterStartYear": 0,
-      "prefilterMarginMonths": 6
+      "prefilterStartYear": 0
     },
     "sources": {
       "primary": "Microsoft Release Communications MCP (get_recent_azure_updates / get_azure_update_by_id)",
@@ -41,7 +40,13 @@
       "duplicatePageIds": []
     },
     "candidateNoticeIds": [],
-    "prefilteredOut": [ { "id": "000000", "reason": "availabilityMonthBeforePrefilter" } ],
+    "prefilter": {
+      "_comment": "候補 = 年フィルタ内の全件 ∪ 補集合のうちタイトル・本文に Y（prefilterStartYear）以上の西暦（20xx）を含む投稿。除外は範囲内のリタイア日を持ち得ない投稿だけ（件数のみ記録・補集合クエリと本ルールで再現可能）。screenStatus ごとの等式はオーケストレーター定義の手順 4-4。",
+      "screenStatus": "done|notNeeded|unavailable|fallbackAll",
+      "screenedCount": 0,
+      "bodyYearMatchedNoticeIds": [],
+      "excludedCount": 0
+    },
     "workerReturnedNoticeIds": [],
     "failedNoticeIds": [ { "id": "000000", "reason": "fetchFailed|malformedShard|retriesExhausted", "attempts": 3 } ],
     "outOfScopeAfterExtraction": [ { "id": "000000", "eventKey": "000000", "reason": "retireDateOutsideWindow" } ],
@@ -152,10 +157,10 @@
     { "quarter": "YYYY-Qn または 日付不明", "total": 0, "high": 0, "medium": 0, "low": 0, "needsReview": 0 }
   ],
   "batches": [
-    { "batchId": "B01", "noticeIds": ["000000"], "dupGroupIds": [], "shardPath": ".work/batch-01.json", "status": "pending|done|failed|downgraded", "attempts": 0 }
+    { "batchId": "B01", "noticeIds": ["000000"], "referenceNoticeIds": [], "dupGroupIds": [], "shardPath": ".work/batch-01.json", "status": "pending|done|failed|downgraded", "attempts": 0 }
   ],
   "dupCandidateGroups": [
-    { "groupId": "G01", "noticeIds": ["000000", "000001"], "rule": "normalizedTitle|sameTarget" }
+    { "groupId": "G01", "noticeIds": ["000000", "000001"], "rule": "normalizedTitle|sameTarget|mixed", "anchorNoticeId": "000001", "batchIds": ["B01"] }
   ],
   "collectionPlan": [
     {
@@ -163,7 +168,7 @@
       "requiredBy": "常時",
       "dueStep": 4,
       "status": "pending",
-      "evidence": { "query": "tags/any(t:t eq 'Retirements') ＋ 年フィルタと補集合", "expectedCount": null, "resultCount": null, "collectedAt": "", "note": "inScopeCount + complementCount = retirementsTotal" }
+      "evidence": { "query": "tags/any(t:t eq 'Retirements') ＋ 年フィルタと補集合 ＋ 補集合の本文の年による候補補完", "expectedCount": null, "resultCount": null, "collectedAt": "", "note": "inScopeCount + complementCount = retirementsTotal／candidateNoticeIds = 年フィルタ内 ∪ bodyYearMatchedNoticeIds" }
     },
     {
       "task": "Detail:fetchAndExtract",

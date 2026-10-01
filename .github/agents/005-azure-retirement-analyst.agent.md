@@ -89,7 +89,7 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
 | `all` | `null` | `null` |
 | `custom` | 指定開始月の 1 日 | 指定終了月の末日 |
 
-- **イベントの範囲判定（区間の重なり）**: `retireDate` の `[start, end]` が `[windowStart, windowEnd]` と重なれば範囲内。`precision=unknown` のイベントは常に範囲内（要確認として残す）。
+- **イベントの範囲判定（区間の重なり）**: `retireDate` の `[start, end]` が `[windowStart, windowEnd]` と重なれば範囲内。`precision=unknown` のイベントは常に範囲内（要確認として残す）。ただし手順 4-4 で事前除外した投稿は、日付の手がかり（availability の年月・タイトルと本文の西暦年）がすべて範囲より前と確定しているため、詳細取得の対象にしない（日付不明になり得る場合も含む）。
 
 ### 手順 2. 収集能力の判別 →〈実行前の最終確認〉
 
@@ -124,33 +124,64 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
    - `inScopeCount + complementCount = retirementsTotal` を確認する（`consistent`）。`windowStart=null`（`all`）なら範囲内候補 = Retirements 全件、補集合は 0 件として扱う。
 3. **列挙**: 範囲内候補を全ページ取得する（MRC MCP を優先。1 回最大 50 件でページングし、安定した並び順を指定できる場合は指定する。応答が大きすぎる・件数情報を返さない場合は公開 API の `$select=id,title,products,productCategories,availabilities,created,modified&$orderby=id&$top=100&$skip=<n>` で列挙してよい）。各 ID の `title` / `products` / `productCategories` / `availabilities` / `created` / `modified` を記録する。
    - ページ間の重複 ID は `duplicatePageIds` に記録して一意化する。一意 ID 数 ≠ `inScopeCount`、または列挙後の総数 `lastObserved` ≠ `firstObserved` なら **1 回だけ再列挙**し、なお不一致なら `consistent=false` として `progress.md` に記録し続行する（レポートの「情報源と収集の完全性」に表示される）。
-4. **事前絞り込み（6 か月マージン）**: 投稿の availability 月の区間が `[windowStart − 6 か月, windowEnd + 6 か月]` と重なるものを `candidateNoticeIds` に入れる（availability が無い投稿は必ず含める）。外れたものは `prefilteredOut[]`（理由付き）。本文の日付が availability と異なる投稿を取りこぼさないためのマージンであり、**最終的な範囲判定は手順 6 で抽出後の日付により行う**。
+4. **候補の確定（本文の年による補完・取りこぼし防止）**: availability の年月は本文のリタイア日とずれることがあり、ずれの大きさに上限は無い（`dateConflict`。例: availability が 2024 年でも本文は 2027 年のリタイア）。そのため、**availability だけを根拠に投稿を除外しない**。
+   - `windowStart=null`（`all`）: Retirements 全件が候補（補集合 0 件・`ledger.prefilter.screenStatus=notNeeded`）。
+   - それ以外: 範囲内候補（手順 4-2）は**全件**を候補にする。補集合はタイトルと本文を公開 API から取得し、`Y` 以上の西暦 4 桁（`20xx`）を 1 つでも含む投稿を候補に加える（次の READ コマンド。結果は画面表示のみでファイルを書かない）。
+
+     ```powershell
+     $Y = <Y>; $api = 'https://www.microsoft.com/releasecommunications/api/v2/azure'
+     $flt = [uri]::EscapeDataString("tags/any(t:t eq 'Retirements') and availabilities/any() and not availabilities/any(a:a/year ge $Y)")
+     $all = @(); $skip = 0
+     do { $p = Invoke-RestMethod "$api`?`$filter=$flt&`$select=id,title,description,products,productCategories,availabilities,created,modified&`$orderby=id&`$top=100&`$skip=$skip"; $all += @($p.value); $skip += 100 } while (@($p.value).Count -eq 100)
+     $keep = @($all | Where-Object { @([regex]::Matches("$($_.title) $($_.description)", '(?<!\d)20\d{2}(?!\d)') | Where-Object { [int]$_.Value -ge $Y }).Count -gt 0 })
+     "screened=$($all.Count) unique=$(@($all.id | Sort-Object -Unique).Count) keep=$($keep.Count) excluded=$($all.Count - $keep.Count)"
+     $keep | Select-Object id, title, products, productCategories, availabilities, created, modified | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 4 }
+     ```
+
+   - `keep` の投稿は表示されたメタデータ（手順 4-3 と同じ項目）を `notices[]` に加え、ID を `ledger.prefilter.bodyYearMatchedNoticeIds` に記録する。`candidateNoticeIds` = 範囲内候補の全 ID ∪ `keep` の ID。除外した投稿は `ledger.prefilter.excludedCount` に件数だけ記録する（補集合クエリと本ルールで再現できるため ID は列挙しない）。`screened` ≠ `complementCount` または `unique` ≠ `screened` なら 1 回だけ再実行し、なお不一致なら補集合の全件を候補にする（`screenStatus=fallbackAll`・観測値を `screenedCount` に残し、`progress.md` に記録）。
+   - **除外しても取りこぼさない根拠**: 除外するのは、availability の年がすべて `Y` 未満で、タイトル・本文にも `Y` 以上の西暦（`20xx`）が無い投稿だけ。ワーカーがリタイア日の根拠にできるのは、西暦 4 桁（2000〜2099 年）が明記された本文の日付（`after D` 等で最大 1 日後ろへずれる）・本文の年・availability の年月だけ（ワーカー定義の「リタイア日」）。したがってこれらの投稿から抽出し得るリタイア日は、日付不明になる場合の手がかりの年を含めて、最も遅くても `Y` 年 1 月 1 日。`Y` の定義（`windowStart` の 6 か月前の年）により `Y` 年 1 月 1 日 < `windowStart` なので、全件をワーカーに渡した場合と比べて、範囲内になり得るイベントを除外することはない。
+   - 上限側（`windowEnd`）による事前除外はしない（本文の年は過去の言及も多く、除外の根拠にならないため）。**最終的な範囲判定は手順 6 で抽出後の日付により行う**。
+   - 公開 API が使えない場合は本文を照合できないため、補集合も手順 4-3 と同じ方法で列挙して全件を候補にする（`screenStatus=unavailable`）。
+   - **`ledger.prefilter` の等式**（`M` = `bodyYearMatchedNoticeIds` 件数、`C` = `candidateNoticeIds` 件数）:
+     - `done`: `screenedCount` = `complementCount`、`excludedCount` = `complementCount` − `M`、`C` = `inScopeCount` + `M`
+     - `notNeeded`: `complementCount` = `screenedCount` = `M` = `excludedCount` = 0、`C` = `inScopeCount`
+     - `unavailable` / `fallbackAll`: `M` = 0、`excludedCount` = 0、`C` = `inScopeCount` + `complementCount`（`unavailable` は `screenedCount` = 0）
 5. **カテゴリの許容集合**: 列挙データに出現した `productCategories` の一意集合 ＋ `Uncategorized` を `allowedCategories` とする（ワーカーの推定はこの集合からのみ選ばせる）。
 6. **重複候補グループ**（同一イベントの再告知・日付更新・リマインダーを統合するための候補）:
    - 正規化タイトル（小文字化、先頭の `Retirement:` / `Retirement notice:` / `Action required:` / `Action recommended:` / `Reminder:` / `Update:` を除去、英数字以外を空白に）が完全一致する投稿。
    - 同じ製品を持ち、タイトルが**同じ対象（同じ SKU / シリーズ / 機能 / API・ランタイム版）**を指す投稿（例: `NVv3-series … will be retired on …` と `NVv3-series Azure Virtual Machines`）。同じ製品・同じ月でも対象が異なるものは候補にしない。
-   - 1 グループ最大 6 件。`dupCandidateGroups[]` に記録する（`rule` = `normalizedTitle` または `sameTarget`）。最終的な統合判断はワーカーが本文の明記で行う（候補に入れただけでは統合しない）。
-7. **バッチ化**: 候補を（カテゴリの昇順先頭値、無ければ `Uncategorized`）→ ID 昇順に並べ、**1 バッチ最大 8 件**で詰める。**重複候補グループは同じバッチに入れる**（分割しない）。`batchId` は `B01`, `B02`, …、シャードは `.work/batch-01.json` …。各候補はちょうど 1 つのバッチに属する。
+   - 上の関係で推移的につながる投稿を 1 グループ（連結成分）にまとめる。**件数で切らない**（切ると残りが同一判定されず、グループを重ねると 1 バッチに収まらないため）。各投稿は最大 1 グループに属する。
+   - `anchorNoticeId` = グループ内で `modified` が最も新しい投稿（手順 6-2 の代表と同じ基準）。
+   - `dupCandidateGroups[]` に記録する（`rule` = `normalizedTitle` / `sameTarget` / 両方による連結なら `mixed`）。最終的な統合判断はワーカーが本文の明記で行う（候補に入れただけでは統合しない）。
+7. **バッチ化**: 候補を（カテゴリの昇順先頭値、無ければ `Uncategorized`）→ ID 昇順に並べ、**1 バッチで本文を取得する投稿は最大 8 件**（参照投稿を含む）で詰める。`batchId` は `B01`, `B02`, …、シャードは `.work/batch-01.json` …。各候補はちょうど 1 つのバッチに**割当**として属する（参照投稿としての掲載は割当に数えない）。
+   - **8 件以下のグループ**: 同じバッチに入れる（分割しない）。
+   - **8 件を超えるグループ（バッチをまたぐ統合の契約）**: アンカー以外のメンバーを `modified` の新しい順に最大 7 件ずつのチャンクに分け、チャンクごとにこのグループ専用のバッチを作る。最初のバッチ（**所有バッチ**）はアンカーを割当として含め、2 つ目以降のバッチはアンカーを**参照投稿**（`batches[].referenceNoticeIds`）として含める。参照投稿を持つバッチは、所有バッチが G2 に合格した後の wave で起動し、アンカーの確定済みイベントを渡す（手順 5）。ワーカーはそのイベントの中から `sameEventAs` の相手を選ぶため（自分で `eventKey` を採番しない）、チャンクをまたいで何度も再告知されたイベントも、アンカーを介して手順 6-2 で 1 つに統合される。アンカーを介さない同一関係はチャンク内でだけ判定し、チャンクをまたぐものは統合しない（重複候補として `relatedNoticeIds` に入る）。
+   - 所属バッチを `dupCandidateGroups[].batchIds` に記録する。
 8. `findings.json` を [テンプレート](../../usecases/005-azure-retirement-report/report-template/findings.json) の構造で `create_file` する（`metadata` / `ledger` / `notices[]`（列挙データのみ・`eventIds` は空。R2 の分割書き込みで追記）/ `batches[]` / `dupCandidateGroups[]` / `collectionPlan[]`。`events[]` は空配列、`summary` は 0）。`collectionPlan` の `Enumerate:retirementNotices` を証跡付き `done` にする。
-- 🔍 **G1**: `consistent` を記録した／ページ重複を一意化し、一意件数 = `inScopeCount`（不一致は再列挙後も残れば `consistent=false` として記録済み）／`candidateNoticeIds` 確定／全候補がちょうど 1 バッチに割当／`progress.md` のバッチ表を作成した。
+- 🔍 **G1**: `consistent` を記録した／ページ重複を一意化し、一意件数 = `inScopeCount`（不一致は再列挙後も残れば `consistent=false` として記録済み）／`ledger.prefilter` が `screenStatus` に応じた等式（手順 4-4）を満たす／全候補がちょうど 1 バッチに割当（参照投稿を除く）・各バッチの本文取得は 8 件以内・8 件超のグループは所有バッチがアンカーを割当として持ち、他のチャンクのバッチがアンカーを参照投稿として持つ／`progress.md` のバッチ表を作成した。
 
 ### 手順 5. 詳細取得・要約（ワーカー並列 fan-out）
 
-- **並列実行**: `azure-retirement-summarizer` を **同じ tool-call batch で最大 6 件ずつ**起動する（wave 方式。全返却を待ってから次の wave）。呼び出し構文を自作せず、VS Code の agent tool が提供する並列 subagent 実行を使う。
+- **並列実行**: `azure-retirement-summarizer` を **同じ tool-call batch で最大 6 件ずつ**起動する（wave 方式。全返却を待ってから次の wave）。呼び出し構文を自作せず、VS Code の agent tool が提供する並列 subagent 実行を使う。**参照投稿を持つバッチは、参照先を割当として持つバッチが G2 に合格した後の wave で起動する**（参照先の確定済みイベントを渡すため）。
 - **各ワーカーへ渡す入力（プロンプトに完全な文脈を含める）**:
   - `reportFolder`（絶対パス）・`shardPath`（`<reportFolder>/.work/batch-<NN>.json`）・`batchId`・`attempt`・`asOfDate`
   - `notices[]`: `id` / `title` / `products` / `productCategories` / `availabilityMonth`（`YYYY-MM` か `null`）/ `modified`
   - `dupCandidateGroups`（このバッチ内のグループ）・`allowedCategories`
+  - `referenceNotices[]`（参照投稿がある場合のみ）: `id` / `title` / `products` / `modified` / `events[]`（参照先を返却したシャードの各イベントの `eventKey` / `affectedScopeJa` / `retireDate` をそのまま渡す）。「本文を同一判定にだけ使い、シャードに出力しない。`sameEventAs` で参照投稿を指すときは `events[].eventKey` から選ぶ」と明記する
   - 「ユーザーに質問しない・`findings.json` / `progress.md` を書かない・シャードは 1 ファイルだけ」の指示
-- **返却の検証（G2・ワーカーごと）**: マニフェストの `expectedNoticeIds` が割当と一致し、`returnedNoticeIds ∪ failedNoticeIds` = 割当（漏れ・重複 0）。シャードを `read_file` で読み、端末の READ 検証（`Get-Content -Raw <shard> | ConvertFrom-Json`）で有効な JSON か、各 notice に `events[]`（1 件以上）と必須キー（`retireDate.precision` / `flags` 3 種 / `impactType` / `classificationStatus` / `summaryJa` / `remediationStatus`）があるか、`sameEventAs` の参照先（`noticeId` + `eventKey`）が同じバッチのシャード内に実在するかを確認する。
-- **再委譲**: 失敗 ID・不正なシャードの ID **だけ**を新しいバッチ（`B<NN>-r<attempt>`）にまとめ、同じ wave 方式で再委譲する。**各 ID の試行は最大 3 回（初回＋再委譲 2 回）**。3 回目でも失敗する ID は `ledger.failedNoticeIds`（`retriesExhausted`・`attempts: 3`）とし、`notices[].fetchStatus=failed`・イベントを作らずに続行する（`collectionPlan` の `Detail:fetchAndExtract` は `downgraded`＋失敗 ID を evidence に記載）。
+- **返却の検証（G2・ワーカーごと）**: マニフェストの `expectedNoticeIds` が割当（参照投稿を含まない）と一致し、`returnedNoticeIds ∪ failedNoticeIds` = 割当（漏れ・重複 0）。シャードを `read_file` で読み、端末の READ 検証（`Get-Content -Raw <shard> | ConvertFrom-Json`）で有効な JSON か、各 notice に `events[]`（1 件以上）と必須キー（`retireDate.precision` / `flags` 3 種 / `impactType` / `classificationStatus` / `summaryJa` / `remediationStatus`）があるか、`sameEventAs` の参照先（`noticeId` + `eventKey`）が同じシャード内のイベントか、そのバッチに渡した参照投稿の `events[].eventKey` のいずれかであるかを確認する（どちらでもなければ不正なシャードとして再委譲）。
+- **再委譲**: 失敗 ID・不正なシャードの ID **だけ**を新しいバッチ（`B<NN>-r<attempt>`）にまとめ、同じ wave 方式で再委譲する。
+  - **外部参照**: 失敗 ID が重複候補グループに属し、同じ再委譲バッチに入らないメンバーがある場合は、グループのアンカー（アンカー自身が失敗 ID なら、返却済みのメンバーで `modified` が最も新しい投稿）を参照投稿にする。返却済みのメンバーが無ければ参照投稿なしで再委譲し、`progress.md` に記録する。
+  - **詰め方**: 同じグループの失敗 ID は同じバッチに入れ（7 件を超えるときは手順 4-7 と同じく最大 7 件ずつに分け、各バッチに同じ参照投稿を入れる）、割当 ID と外部参照 ID の合計（重複除去・同じバッチで割当になっている ID は参照にしない）が 8 件以内になるように詰める。バッチ内の割当 ID 同士の重複候補グループは `dupCandidateGroups` として渡す。
+  - **各 ID の試行は最大 3 回（初回＋再委譲 2 回）**。3 回目でも失敗する ID は `ledger.failedNoticeIds`（`retriesExhausted`・`attempts: 3`）とし、`notices[].fetchStatus=failed`・イベントを作らずに続行する（`collectionPlan` の `Detail:fetchAndExtract` は `downgraded`＋失敗 ID を evidence に記載）。
+  - 8 件超のグループで、所有バッチの G2 合格時点でアンカーが返却されていない（取得失敗）場合は、所有バッチで返却済みのメンバーのうち `modified` が最も新しい投稿を新しいアンカーにし、参照投稿付きバッチの参照先と `dupCandidateGroups[].anchorNoticeId` / `batches[].referenceNoticeIds` を置き換えてから起動する（返却済みのメンバーが無ければ参照投稿なしで起動し、`progress.md` に記録する）。元のアンカーは外部参照の規則に従って再委譲する。
 - 各 wave の後に `progress.md` のバッチ表を更新する。`Remediation:learnSupplement` は、ワーカーが返した `learnMcp` の可否から `done` / `downgraded` を決める。
 - 🔍 **G2**: 全バッチが `done` または `downgraded`／`candidateNoticeIds` = `workerReturnedNoticeIds` ∪ `failedNoticeIds`／全シャードが有効。
 
 ### 手順 6. 統合・正規化・影響度判定（あなたが実施・決定論）
 
 1. **notice の確定**: シャードの `titleJa`、推定製品 / カテゴリ（API 値が空の場合のみ採用し `productSource` / `categorySource=inferred`。推定不可は `Uncategorized`）、`fetchStatus` / `fetchedVia` / `batchId` を `notices[]` に反映する。
-2. **イベントの統合**: ワーカーの `sameEventAs`（`noticeId` + `eventKey`・本文の明記による証拠付き）で結ばれたイベント同士を 1 つに統合する（推移的に結ばれたものも同じクラスタ）。証拠の無い重複候補は統合せず、互いの `relatedNoticeIds[]` に入れる。統合規則（根拠を失わないための保守的な統合）:
+2. **イベントの統合**: ワーカーの `sameEventAs`（`noticeId` + `eventKey`・本文の明記による証拠付き）で結ばれたイベント同士を 1 つに統合する（推移的に結ばれたものも同じクラスタ。バッチをまたいでも全シャードを通して結ぶ）。参照投稿を指す `sameEventAs`（バッチをまたぐ参照）は、参照先を返却したシャードの同じ `eventKey` のイベントに結ぶ（G2 で実在を確認済み）。証拠の無い重複候補は統合せず、互いの `relatedNoticeIds[]` に入れる。統合規則（根拠を失わないための保守的な統合）:
    - **代表**: `modified` が最も新しい投稿（同時刻なら数値として大きい ID）。`eventId` / `primaryNoticeId` / タイトル類は代表から取る。
    - **`retireDate` / `dateConflict` / `dateNoteJa`**: `retireDate.source=description`（本文に明記）のメンバーのうち最も新しい投稿の値。該当が無ければ代表の値。採用しなかった日付は `dateNoteJa` に「旧告知: <日付>」として残す。
    - **`flags` / `flagEvidence`**: フラグごとに、いずれかが `"true"` → `"true"`、それ以外でいずれかが `"false"` → `"false"`、すべて `"unknown"` → `"unknown"`。根拠は採用した値を持つメンバーのもの。`"true"` と `"false"` が衝突した場合は `"true"` を採用し `classificationStatus=ambiguous` とする。

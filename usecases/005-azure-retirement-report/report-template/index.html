@@ -206,8 +206,8 @@
     <tbody>
       <tr><td>Retirements タグの全投稿</td><td>{{RETIREMENTS_TOTAL}}</td><td>Azure Updates で Retirements タグが付いた投稿の総数（収集時点）</td></tr>
       <tr><td>年フィルタ内 / 補集合</td><td>{{INSCOPE_COUNT}} / {{COMPLEMENT_COUNT}}（整合: {{ENUM_CONSISTENT}}）</td><td>年フィルタ内と補集合の合計が全投稿数と一致することで列挙漏れが無いことを確認</td></tr>
-      <tr><td>詳細取得の対象投稿</td><td>{{CANDIDATE_COUNT}}</td><td>収集範囲（6 か月のマージン付き）に重なる投稿</td></tr>
-      <tr><td>事前除外</td><td>{{PREFILTERED_OUT_COUNT}}</td><td>リタイア月が範囲より前の投稿</td></tr>
+      <tr><td>詳細取得の対象投稿</td><td>{{CANDIDATE_COUNT}}</td><td>年フィルタ内の全投稿と、補集合のうちタイトル・本文に起点年以降の西暦を含む投稿（availability と本文の日付のずれによる取りこぼし防止）</td></tr>
+      <tr><td>事前除外</td><td>{{PREFILTERED_OUT_COUNT}}</td><td>availability・タイトル・本文の年がすべて起点年より前で、範囲内のリタイア日を持ち得ない投稿</td></tr>
       <tr><td>詳細取得・要約済み</td><td>{{WORKER_RETURNED_COUNT}}</td><td>本文を取得し、日付・影響・対応策を抽出できた投稿</td></tr>
       <tr><td>取得失敗</td><td>{{FAILED_COUNT}}</td><td>再試行後も取得できなかった投稿（findings.json の ledger.failedNoticeIds）</td></tr>
       <tr><td>抽出後の範囲外</td><td>{{OUT_OF_SCOPE_COUNT}}</td><td>本文のリタイア日が収集範囲外だったイベント</td></tr>
