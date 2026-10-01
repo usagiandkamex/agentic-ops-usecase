@@ -39,7 +39,7 @@ user-invocable: false
 
 - HTML / CSV は内容を自分で組み立て、`create_file`（新規 1 回）＋編集ツール（更新）で直接書き出す。**補助スクリプト（`.py` / `.ps1` / `.js` 等）を書かない・実行しない**。
 - テンプレートは `read_file` で読む**参照元**で、保存先に複製しない（`Copy-Item` しない）。前回のレポートや記憶した HTML をベースに再構成しない。
-- 端末の用途は **CSV の BOM 付与**（1 行の `Set-Content -Encoding utf8BOM`）と**検証ゲートの READ コマンド**に限る。
+- 端末の用途は **CSV の BOM 付与**（1 行の `Set-Content -Encoding utf8BOM`）と、**手順 7-1 の URL 確認・検証ゲートの READ コマンド**に限る。
 
 ### R3. 機密
 
@@ -61,6 +61,26 @@ user-invocable: false
 ### 手順 7-1. 入力の確認（再計算しない）
 
 - `findings.json` を `read_file` で読み、`events[]` の各要素に `eventId` / `retireDate.precision` / `status` / `impact` があること、`eventId` の重複が無いこと、`summary.eventCount = events` 件数であることを確認する。満たさなければ生成せず `dataFailure` を返す。
+- **URL の許可リスト確認（生成前・READ コマンド）**: 全イベントの `updateUrl` と `referenceLinks[].url` を、[README](../../usecases/005-azure-retirement-report/report-template/README.md) の「リンクの許可リスト」で判定する（検証ゲート 7b と同じ判定。変更するときは両方を揃える）。違反が 1 件でもあれば生成せず、`dataFailure` を返す。`reason` は「許可リスト外の URL」＋違反の `eventId` / 項目パス / 種別（固定値 `SafeLinks` / `notHttps` / `userInfo` / `disallowedHostOrPath` / `empty/invalid`）だけにする（**URL・ホスト名は書かない**。外部由来の値で、SafeLinks のクエリやホスト名に個人情報が含まれうるため。親は `eventId` と項目パスで `findings.json` の値を特定できる）。`eventIds` は違反のある全イベント（件数を絞らない）。HTML では許可外リンクをクリックできなくしても、`EVENTS_JSON` と CSV の `referenceUrls` には URL がそのまま残るため、生成前に止める。
+
+```powershell
+$f = Get-Content -Raw -Encoding utf8 '<reportFolder>/findings.json' | ConvertFrom-Json
+$okUrl = { param($u) $x = $null
+  if (-not [Uri]::TryCreate([string]$u, [UriKind]::Absolute, [ref]$x) -or $x.Scheme -ne 'https' -or $x.UserInfo) { return $false }
+  $hn = $x.Host.ToLowerInvariant()
+  ($hn -match '(^|\.)(microsoft\.com|aka\.ms)$') -or ($hn -in 'portal.azure.com','ms.portal.azure.com','ai.azure.com','feedback.azure.com','azure.github.io') -or
+    ($hn -eq 'github.com' -and $x.AbsolutePath -match '^/(Azure|Azure-Samples|microsoft|MicrosoftDocs)(/|$)') }
+$viol = @(foreach ($e in @($f.events)) {
+  $cand = @([pscustomobject]@{ p = 'updateUrl'; u = $e.updateUrl }); $links = @($e.referenceLinks | Where-Object { $_ })
+  for ($i = 0; $i -lt $links.Count; $i++) { $cand += [pscustomobject]@{ p = "referenceLinks[$i].url"; u = $links[$i].url } }
+  foreach ($c in $cand) { if (-not (& $okUrl $c.u)) { $x = $null
+    $k = if (-not [Uri]::TryCreate([string]$c.u, [UriKind]::Absolute, [ref]$x)) { 'empty/invalid' } elseif ($x.Host -match '(^|\.)safelinks\.protection\.outlook\.com$') { 'SafeLinks' } elseif ($x.Scheme -ne 'https') { 'notHttps' } elseif ($x.UserInfo) { 'userInfo' } else { 'disallowedHostOrPath' }
+    [pscustomobject]@{ eventId = $e.eventId; path = $c.p; kind = $k } } } })
+"url allowlist violations=$($viol.Count) eventIds=" + ((@($viol | ForEach-Object { $_.eventId }) | Sort-Object -Unique) -join ',')
+$viol | ForEach-Object { "  $($_.eventId) $($_.path) $($_.kind)" }
+```
+
+合格条件: `violations=0`（空の `updateUrl` / `url` も違反として数える）。
 
 ### 手順 7-2. index.html（テンプレ読込 → 置換 → 書き出し）
 
@@ -88,9 +108,9 @@ user-invocable: false
 2. **SECTION アンカー**: `summary` / `retirement-list` / `by-category` / `by-quarter` / `impact-rule` / `sources` の 6 つが残っている。
 3. **データアイランド**: 生の `<` を含まず、JSON として解析でき、`eventId` の並びが `findings.json` の `events` と完全一致する。
 4. **スクリプト / CSP 不変**: ロジック用 `<script>` 本体と CSP `<meta>` がテンプレートと一致する（改行正規化後）。
-5. **CSV**: 先頭 3 バイトが 239,187,191、ヘッダがテンプレートと一致、行数と `eventId` の並びが `events` と一致する（`Import-Csv` で解析できる＝列ズレなし）。
+5. **CSV**: 先頭 3 バイトが 239,187,191、ヘッダがテンプレートと一致、行数と `eventId` の並びが `events` と一致する。さらに全行・全列（列数を含む）が `events` から作る期待値と完全一致する（5d）。
 6. **サマリ整合**: カードの値・カテゴリ別 / 四半期別の行が `summary` / `byCategory` / `byQuarter` と一致する。
-7. **安全性**: 出力にメールアドレス（`@` を含むアドレス形式）・`safelinks.protection.outlook.com`・`<...>` 形式のプレースホルダが無い。
+7. **安全性**: 出力にメールアドレス（`@` を含むアドレス形式）・`safelinks.protection.outlook.com`・`<...>` 形式のプレースホルダが無い（7a）。`findings.json` とデータアイランドの全 `updateUrl` / `referenceLinks[].url` が許可リストを満たす（7b。CSV は 5d で findings と一致することにより担保）。
 8. **成果物**: `reportFolder` 直下に `index.html` / `retirements.csv` / `findings.json` / `progress.md`（＋親が後で削除する `.work/`）以外のファイルが無い。
 
 ### 手順 7-5. 独立レビュー
