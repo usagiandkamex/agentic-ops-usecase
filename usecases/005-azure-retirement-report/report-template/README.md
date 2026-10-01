@@ -84,7 +84,7 @@
 2. **retirements.csv**: ヘッダはそのまま、`{{RETIREMENT_ROWS}}` を `events[]` の全要素（1 行 = 1 イベント・`events` と同順）に置換する。
    - 配列（`noticeIds` / `categories` / `products` / `referenceUrls` 等）は ` | ` 区切り、`remediationJa` は `1) … 2) …` 形式、`milestones` は `<labelJa>:<date>` を ` | ` 区切り、真偽値（`dateConflict`）は `true` / `false`、`null` は空欄。
    - **RFC 4180**: カンマ・改行・二重引用符を含む値は二重引用符で囲み、内部の `"` は `""` にする。
-   - **数式インジェクション対策**: テキスト列の値が `=` `+` `-` `@` で始まる場合は先頭に `'` を付ける（数値列 `daysRemaining` 等は対象外）。
+   - **数式インジェクション対策**: テキスト列の値が `=` `+` `-` `@` またはタブ（`\t`）・CR（`\r`）・LF（`\n`）で始まる場合は先頭に `'` を付ける（数値列 `daysRemaining` 等は対象外）。
 3. CSV を UTF-8 BOM 付きで再保存する（下記「文字コード」）。
 4. **検証ゲート**（下記）を端末の READ コマンドで実行し、不合格なら当該ファイルを修正して再検証する。
 
@@ -138,7 +138,17 @@ $rows = @(Import-Csv -Encoding utf8 "$d/retirements.csv")
 # 6) summary cards
 $cards = [regex]::Matches($h,'<div class="card[^"]*"><div class="n">([^<]*)</div><div class="l">') | ForEach-Object { $_.Groups[1].Value }
 $exp = @($f.summary.eventCount,$f.summary.highCount,$f.summary.mediumCount,$f.summary.lowCount,$f.summary.needsReviewCount,$f.summary.within90DaysCount,$f.summary.retiredCount,$f.summary.dateConflictCount) -join ','
-& $r '6 summary cards = findings.summary' (($cards -join ',') -eq $exp) ($cards -join ',')
+& $r '6a summary cards = findings.summary' (($cards -join ',') -eq $exp) ($cards -join ',')
+# 6b/6c) by-category / by-quarter rows = findings.byCategory / byQuarter (same order; 0 rows -> fallback row only)
+$rowsOf = { param($from, $to)
+  $sec = [regex]::Match($h,"<!-- SECTION: $from -->([\s\S]*?)<!-- SECTION: $to -->").Groups[1].Value
+  $body = [regex]::Match($sec,'<tbody>([\s\S]*?)</tbody>').Groups[1].Value
+  [regex]::Matches($body,'<tr>([\s\S]*?)</tr>') | ForEach-Object { (@([regex]::Matches($_.Groups[1].Value,'<td[^>]*>([\s\S]*?)</td>') | ForEach-Object { [Net.WebUtility]::HtmlDecode($_.Groups[1].Value) }) -join [char]31) } }
+$expRows = { param($items, $key) $x = @($items | Where-Object { $_ } | ForEach-Object { @($_.$key,$_.total,$_.high,$_.medium,$_.low,$_.needsReview) -join [char]31 }); if ($x.Count) { $x } else { @('該当なし（対象期間のリタイア情報はありません）') } }
+$catAct = @(& $rowsOf 'by-category' 'by-quarter'); $catExp = @(& $expRows $f.byCategory 'category')
+& $r '6b category rows = findings.byCategory' (($catAct -join "`n") -ceq ($catExp -join "`n")) "html=$($catAct.Count) findings=$(@($f.byCategory).Count)"
+$qAct = @(& $rowsOf 'by-quarter' 'impact-rule'); $qExp = @(& $expRows $f.byQuarter 'quarter')
+& $r '6c quarter rows = findings.byQuarter' (($qAct -join "`n") -ceq ($qExp -join "`n")) "html=$($qAct.Count) findings=$(@($f.byQuarter).Count)"
 # 7) safety: no e-mail address, SafeLinks or <PLACEHOLDER> left
 $bad = @(Select-String -CaseSensitive -Path "$d/index.html","$d/retirements.csv" -Pattern '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|safelinks\.protection\.outlook\.com|<[A-Z_]{3,}>')
 & $r '7 no email/safelinks/placeholder' ($bad.Count -eq 0) (($bad | Select-Object -First 3) -join ' / ')
@@ -147,4 +157,4 @@ $names = @(Get-ChildItem -Force $d | Where-Object Name -ne '.work' | Select-Obje
 & $r '8 folder contents' (($names -join ',') -eq 'findings.json,index.html,progress.md,retirements.csv') ($names -join ',')
 ```
 
-- コマンドで検査しない項目は目視で確認する: カテゴリ別 / 四半期別の行が `findings.json` の `byCategory` / `byQuarter` と一致すること、総評が `summary.statusHighlight` と一致すること。
+- コマンドで検査しない項目は目視で確認する: 総評が `summary.statusHighlight` と一致すること。

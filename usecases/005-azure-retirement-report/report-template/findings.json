@@ -42,7 +42,6 @@
     },
     "candidateNoticeIds": [],
     "prefilteredOut": [ { "id": "000000", "reason": "availabilityMonthBeforePrefilter" } ],
-    "detailFetchedNoticeIds": [],
     "workerReturnedNoticeIds": [],
     "failedNoticeIds": [ { "id": "000000", "reason": "fetchFailed|malformedShard|retriesExhausted", "attempts": 3 } ],
     "outOfScopeAfterExtraction": [ { "id": "000000", "eventKey": "000000", "reason": "retireDateOutsideWindow" } ],
