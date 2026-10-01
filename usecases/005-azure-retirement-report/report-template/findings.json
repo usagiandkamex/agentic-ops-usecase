@@ -29,9 +29,9 @@
     "_comment": "収集の完全性台帳。各段階の ID 件数を記録し、欠落・重複・取りこぼしを検出する。",
     "retirementsTotal": { "firstObserved": 0, "lastObserved": 0, "query": "tags/any(t:t eq 'Retirements')" },
     "enumeration": {
-      "inScopeQuery": "tags/any(t:t eq 'Retirements') and availabilities/any(a:a/year ge <Y>)",
+      "inScopeQuery": "tags/any(t:t eq 'Retirements') and (availabilities/any(a:a/year ge <Y>) or not availabilities/any())",
       "inScopeCount": 0,
-      "complementQuery": "tags/any(t:t eq 'Retirements') and not availabilities/any(a:a/year ge <Y>)",
+      "complementQuery": "tags/any(t:t eq 'Retirements') and availabilities/any() and not availabilities/any(a:a/year ge <Y>)",
       "complementCount": 0,
       "consistent": true,
       "enumeratedAt": "{{META_DATETIME}}",
