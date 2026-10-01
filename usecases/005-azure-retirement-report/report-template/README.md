@@ -82,7 +82,8 @@
    - **HTML テキストのエスケープ**: `STATUS_HIGHLIGHT`・`CATEGORY`・`QUARTER`・`SCOPE_LABEL` 等は `&` `<` `>` `"` `'` を文字実体参照にする。取得した HTML をそのまま埋め込まない。
    - **保持必須**: CSP の `<meta>`・`<style>`・`<span class="crumb">`・`<footer>`・各 `<thead>`・`<!-- SECTION: x -->` アンカー・**本文末尾のロジック用 `<script>`（1 文字も変えない。CSP の sha256 ハッシュで許可しているため、改変すると JavaScript が動かなくなる）**。
 2. **retirements.csv**: ヘッダはそのまま、`{{RETIREMENT_ROWS}}` を `events[]` の全要素（1 行 = 1 イベント・`events` と同順）に置換する。
-   - 配列（`noticeIds` / `categories` / `products` / `referenceUrls` 等）は ` | ` 区切り、`remediationJa` は `1) … 2) …` 形式、`milestones` は `<labelJa>:<date>` を ` | ` 区切り、真偽値（`dateConflict`）は `true` / `false`、`null` は空欄。
+   - 列と値の対応: `retireDateStart` / `retireDateEnd` / `datePrecision` = `retireDate.start` / `.end` / `.precision`、`workloadStop` / `dataLossRisk` / `autoMigration` = `flags.*`、`referenceUrls` = `referenceLinks[].url`、それ以外は `events[]` の同名キー。
+   - 配列（`noticeIds` / `relatedNoticeIds` / `categories` / `products` / `referenceUrls`）は ` | ` 区切り、`remediationJa` は各要素を `1) …` `2) …` と番号付けして半角スペース 1 つで連結、`milestones` は `<labelJa>:<date>` を ` | ` 区切り、真偽値（`dateConflict`）は `true` / `false`、`null` と空配列は空欄。
    - **RFC 4180**: カンマ・改行・二重引用符を含む値は二重引用符で囲み、内部の `"` は `""` にする。
    - **数式インジェクション対策**: テキスト列の値が `=` `+` `-` `@` またはタブ（`\t`）・CR（`\r`）・LF（`\n`）で始まる場合は先頭に `'` を付ける（数値列 `daysRemaining` 等は対象外）。
 3. CSV を UTF-8 BOM 付きで再保存する（下記「文字コード」）。
@@ -135,6 +136,35 @@ $hdrOut = (Get-Content -Encoding utf8 "$d/retirements.csv" -TotalCount 1).TrimSt
 & $r '5b csv header' ($hdrOut -ceq (Get-Content -Encoding utf8 "$t/retirements.csv" -TotalCount 1))
 $rows = @(Import-Csv -Encoding utf8 "$d/retirements.csv")
 & $r '5c csv rows/eventIds = findings.events' ((@($rows.eventId) -join ',') -eq $ids) "csv=$($rows.Count)"
+# 5d) CSV: every record has exactly the header's column count and every cell = value derived from findings.events (rules in step 2 above)
+Add-Type -AssemblyName Microsoft.VisualBasic
+$cols = (Get-Content -Encoding utf8 "$t/retirements.csv" -TotalCount 1) -split ','
+$nl = { param($s) ([string]$s) -replace "`r`n?","`n" }
+$jn = { param($a) @($a | Where-Object { $null -ne $_ }) -join ' | ' }
+$fmt = { param($k, $v) $s = & $nl $v; if ($k -notin 'daysRemaining','severityScore','urgencyScore' -and $s -match '^[=+\-@\t\n]') { "'" + $s } else { $s } }
+$cellsOf = { param($e) $i = 0; [ordered]@{
+  eventId = $e.eventId; primaryNoticeId = $e.primaryNoticeId; noticeIds = (& $jn $e.noticeIds); relatedNoticeIds = (& $jn $e.relatedNoticeIds)
+  retireDateStart = $e.retireDate.start; retireDateEnd = $e.retireDate.end; datePrecision = $e.retireDate.precision; status = $e.status
+  daysRemaining = $e.daysRemaining; impact = $e.impact; severityScore = $e.severityScore; urgencyScore = $e.urgencyScore; impactType = $e.impactType
+  workloadStop = $e.flags.workloadStop; dataLossRisk = $e.flags.dataLossRisk; autoMigration = $e.flags.autoMigration; classificationStatus = $e.classificationStatus
+  categories = (& $jn $e.categories); categorySource = $e.categorySource; products = (& $jn $e.products); productSource = $e.productSource
+  title = $e.title; titleJa = $e.titleJa; affectedScopeJa = $e.affectedScopeJa; summaryJa = $e.summaryJa
+  remediationJa = (@($e.remediationJa | Where-Object { $null -ne $_ } | ForEach-Object { $i++; "$i) $_" }) -join ' ')
+  remediationStatus = $e.remediationStatus; migrationTarget = $e.migrationTarget
+  milestones = (& $jn @($e.milestones | Where-Object { $_ } | ForEach-Object { "$($_.labelJa):$($_.date)" }))
+  dateConflict = $(if ($null -eq $e.dateConflict) { '' } elseif ($e.dateConflict -eq $true) { 'true' } else { 'false' })
+  dateNoteJa = $e.dateNoteJa; updateUrl = $e.updateUrl; referenceUrls = (& $jn @($e.referenceLinks | Where-Object { $_ } | ForEach-Object { $_.url })) } }
+$diff = [Collections.Generic.List[string]]::new(); $recs = [Collections.Generic.List[object]]::new(); $evs = @($f.events | Where-Object { $_ })
+if ((@((& $cellsOf ([pscustomobject]@{})).Keys) -join ',') -cne ($cols -join ',')) { $diff.Add('column map != template header') }
+$tf = [Microsoft.VisualBasic.FileIO.TextFieldParser]::new([IO.StreamReader]::new((Resolve-Path "$d/retirements.csv").Path, [Text.UTF8Encoding]::new($false), $true))
+$tf.SetDelimiters(','); $tf.HasFieldsEnclosedInQuotes = $true; $tf.TrimWhiteSpace = $false
+try { [void]$tf.ReadFields(); while (-not $tf.EndOfData) { $recs.Add($tf.ReadFields()) } } catch { $diff.Add("parse: $($_.Exception.Message)") } finally { $tf.Close() }
+if ($recs.Count -ne $evs.Count) { $diff.Add("records csv=$($recs.Count) findings=$($evs.Count)") }
+for ($n = 0; $n -lt [Math]::Min($recs.Count, $evs.Count); $n++) {
+  $row = $recs[$n]; $x = & $cellsOf $evs[$n]
+  if ($row.Count -ne $cols.Count) { $diff.Add("$($evs[$n].eventId): columns=$($row.Count)"); continue }
+  for ($c = 0; $c -lt $cols.Count; $c++) { if ((& $nl $row[$c]) -cne (& $fmt $cols[$c] $x[$cols[$c]])) { $diff.Add("$($evs[$n].eventId):$($cols[$c])") } } }
+& $r '5d csv cells = findings.events' ($diff.Count -eq 0) (($diff | Select-Object -First 5) -join ', ')
 # 6) summary cards
 $cards = [regex]::Matches($h,'<div class="card[^"]*"><div class="n">([^<]*)</div><div class="l">') | ForEach-Object { $_.Groups[1].Value }
 $exp = @($f.summary.eventCount,$f.summary.highCount,$f.summary.mediumCount,$f.summary.lowCount,$f.summary.needsReviewCount,$f.summary.within90DaysCount,$f.summary.retiredCount,$f.summary.dateConflictCount) -join ','
@@ -151,7 +181,16 @@ $qAct = @(& $rowsOf 'by-quarter' 'impact-rule'); $qExp = @(& $expRows $f.byQuart
 & $r '6c quarter rows = findings.byQuarter' (($qAct -join "`n") -ceq ($qExp -join "`n")) "html=$($qAct.Count) findings=$(@($f.byQuarter).Count)"
 # 7) safety: no e-mail address, SafeLinks or <PLACEHOLDER> left
 $bad = @(Select-String -CaseSensitive -Path "$d/index.html","$d/retirements.csv" -Pattern '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|safelinks\.protection\.outlook\.com|<[A-Z_]{3,}>')
-& $r '7 no email/safelinks/placeholder' ($bad.Count -eq 0) (($bad | Select-Object -First 3) -join ' / ')
+& $r '7a no email/safelinks/placeholder' ($bad.Count -eq 0) (($bad | Select-Object -First 3) -join ' / ')
+# 7b) every updateUrl / referenceLinks[].url in findings.events and the data island passes the link allowlist (the CSV is covered by 5d)
+$okUrl = { param($u) $x = $null
+  if (-not [Uri]::TryCreate([string]$u, [UriKind]::Absolute, [ref]$x) -or $x.Scheme -ne 'https' -or $x.UserInfo) { return $false }
+  $hn = $x.Host.ToLowerInvariant()
+  ($hn -match '(^|\.)(microsoft\.com|aka\.ms)$') -or ($hn -in 'portal.azure.com','ms.portal.azure.com','ai.azure.com','feedback.azure.com','azure.github.io') -or
+    ($hn -eq 'github.com' -and $x.AbsolutePath -match '^/(Azure|Azure-Samples|microsoft|MicrosoftDocs)(/|$)') }
+$urls = @(@($f.events) + @($ev) | Where-Object { $_ } | ForEach-Object { $_.updateUrl; @($_.referenceLinks | Where-Object { $_ } | ForEach-Object { $_.url }) } | Where-Object { $_ })
+$badUrl = @($urls | Where-Object { -not (& $okUrl $_) } | Select-Object -Unique)
+& $r '7b all URLs pass the allowlist' ($badUrl.Count -eq 0) (($badUrl | Select-Object -First 3) -join ' / ')
 # 8) folder contents (.work/ is removed by the orchestrator afterwards)
 $names = @(Get-ChildItem -Force $d | Where-Object Name -ne '.work' | Select-Object -ExpandProperty Name | Sort-Object)
 & $r '8 folder contents' (($names -join ',') -eq 'findings.json,index.html,progress.md,retirements.csv') ($names -join ',')

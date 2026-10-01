@@ -23,7 +23,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-l7/HFcQLDqKV/c/aYlg1+T2T9Vc+/WlcsPcjzSru9vY='; img-src data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-jWk/X6KDB22QEraP8Ichz1F+/Gc+Uia4sNxExZpdBLE='; img-src data:; base-uri 'none'; form-action 'none'">
 <title>Azure リタイア情報レポート</title>
 <style>
   :root{--blue:#0078D4;--dark:#243A5E;--bg:#faf9f8;--card:#fff;--bd:#edebe9;--tx:#201f1e;--sub:#605e5c;--good:#107C10;--warn:#F7A600;--bad:#D13438;--rev:#8764B8;}
@@ -144,7 +144,7 @@
     <span id="f-count" class="count"></span>
   </div>
   <table id="ret-table">
-    <thead><tr><th><button type="button" class="sort" data-sort="date">リタイア日</button></th><th><button type="button" class="sort" data-sort="days">残日数</button></th><th><button type="button" class="sort" data-sort="impact">影響度</button></th><th><button type="button" class="sort" data-sort="category">カテゴリ / 製品</button></th><th><button type="button" class="sort" data-sort="title">内容</button></th><th>影響種別</th><th>対応策</th></tr></thead>
+    <thead><tr><th aria-sort="none"><button type="button" class="sort" data-sort="date">リタイア日</button></th><th aria-sort="none"><button type="button" class="sort" data-sort="days">残日数</button></th><th aria-sort="none"><button type="button" class="sort" data-sort="impact">影響度</button></th><th aria-sort="none"><button type="button" class="sort" data-sort="category">カテゴリ / 製品</button></th><th aria-sort="none"><button type="button" class="sort" data-sort="title">内容</button></th><th>影響種別</th><th>対応策</th></tr></thead>
     <tbody id="ret-body">
       <tr><td colspan="7" class="empty">一覧を表示するには JavaScript を有効にするか、retirements.csv を参照してください。</td></tr>
     </tbody>
@@ -509,17 +509,23 @@
     fImp.forEach(function (x) { x.checked = true; });
     apply();
   });
+  function showSort() {
+    Array.prototype.forEach.call(document.querySelectorAll('button.sort'), function (o) {
+      var on = o.getAttribute('data-sort') === sortKey;
+      if (on) { o.setAttribute('data-dir', sortDir); } else { o.removeAttribute('data-dir'); }
+      o.parentNode.setAttribute('aria-sort', on ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none');
+    });
+  }
   Array.prototype.forEach.call(document.querySelectorAll('button.sort'), function (b) {
     b.addEventListener('click', function () {
       var k = b.getAttribute('data-sort');
       sortDir = sortKey === k && sortDir === 'asc' ? 'desc' : 'asc';
       sortKey = k;
-      Array.prototype.forEach.call(document.querySelectorAll('button.sort'), function (o) { o.removeAttribute('data-dir'); });
-      b.setAttribute('data-dir', sortDir);
+      showSort();
       apply();
     });
   });
-  document.querySelector('button.sort[data-sort="date"]').setAttribute('data-dir', 'asc');
+  showSort();
   document.getElementById('filters').hidden = false;
   apply();
 })();
