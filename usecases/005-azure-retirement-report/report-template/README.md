@@ -1,0 +1,150 @@
+# レポートテンプレート（ユースケース 005 Azure リタイア情報レポート）
+
+レポート生成サブエージェント **`azure-retirement-report-writer`** は、このフォルダのテンプレートを **`read_file` で読み込み**、確定済み `findings.json` の実データで
+`{{TOKEN}}` を置換し `<!-- BEGIN X -->`〜`<!-- END X -->` 区域を実データ件数だけ複製した **完成ファイルを `create_file` で** `reports/<YYYYMMDD-HHmmss>/` に書き出します。
+**`Copy-Item` 等のシェルコピーや生成スクリプト（`.py` / `.ps1` / `.js` 等）で作らない**（トークンが未置換のまま残る・規約違反）。
+
+> **フォルダ名 `<YYYYMMDD-HHmmss>`**: **JST（UTC+9）基準**の実行時刻（秒精度）。取得例: `[DateTime]::UtcNow.AddHours(9).ToString('yyyyMMdd-HHmmss')`。同日複数回でも上書きしない。
+
+## ファイル一覧
+
+| テンプレート | 出力 | 作成者 | 説明 |
+| --- | --- | --- | --- |
+| [findings.json](findings.json) | `findings.json` | オーケストレーター | 中核成果物（単一のデータ源）。スキーマ例。`notices[]`（投稿）と `events[]`（リタイアイベント＝一覧の 1 行）を分けて保持する |
+| [index.html](index.html) | `index.html` | report-writer | 単一ページの自己完結 HTML（インライン CSS / JS・外部依存なし）。カテゴリ・製品・影響度・時期・キーワードでフィルタ、列ソート |
+| [retirements.csv](retirements.csv) | `retirements.csv` | report-writer | 1 行 = 1 イベント（UTF-8 BOM 付き・Excel 用） |
+| [progress.md](progress.md) | `progress.md` | オーケストレーター | 実行中の進捗トラッキング（承認直後に作成し、各手順の切れ目で更新） |
+| — | `.work/batch-<NN>.json` | ワーカー | 並列ワーカーの専有シャード（中間データ）。統合後にオーケストレーターが削除する |
+
+最終的なフォルダ内は `index.html` / `retirements.csv` / `findings.json` / `progress.md` の 4 ファイルのみ（`.work/` は削除済み）。
+
+## データモデル（findings.json の要点）
+
+- **`notices[]`**: Azure Updates の投稿（MRC の ID 単位）。`products` / `categories` が空の投稿は、ワーカーが本文から推定し `productSource` / `categorySource` に `inferred` を記録する（推定不可は `Uncategorized`・`categorySource=uncategorized`）。イベントにも同じ `productSource` / `categorySource` を持たせ、HTML では「（推定）」と表示する。
+- **`events[]`**: リタイアイベント（HTML / CSV の 1 行）。1 投稿は通常 1 イベント。**本文に「異なる対象 × 異なる最終リタイア日」が明記されている場合のみ**分割し、`eventId=<noticeId>-<n>` とする。再告知・日付更新などで**本文の明記により同一と判断できる投稿は 1 イベントに統合**し（ワーカーの `sameEventAs` が相手の `noticeId` と `eventKey` を指す）、`noticeIds[]` に全投稿 ID を残す（確信度が低いものは統合せず `relatedNoticeIds[]` で関連付けるだけ）。統合は保守的に行う（日付は本文に明記された最新の値、フラグは `true` を優先、マイルストーン・リンクは和集合。詳細はオーケストレーター定義の手順 6）。
+- **`retireDate`**: 正確な日付を捏造しない。リタイア日 = **影響が発生する最初の日**（`after D` / `supported until D` は D の翌日、移行期限しか無い場合は期限日＋`ambiguous`）。`precision` = `day`（本文に日付が明記）/ `month`（月のみ判明・`start`=月初・`end`=月末）/ `unknown`。`source` = `description` / `availability` / `none`。本文の日付と availability の月が異なる場合は `dateConflict=true` と `dateNoteJa` に両方を記す。
+- **`status` / `daysRemaining`**（JST 暦日・基準日 `asOfDate`）:
+  - `daysRemaining` = `retireDate.start` − `asOfDate`（日数・月精度は月初基準で保守的）。`unknown` は `null`。
+  - `status` = `retired`（`end` < 基準日）/ `currentMonth`（月精度で `start` ≤ 基準日 ≤ `end`）/ `upcoming`（`start` ≥ 基準日）/ `unknown`。
+- **`flags`**: `workloadStop` / `dataLossRisk` / `autoMigration` は **`true` / `false` / `unknown` の 3 値**（文字列）。本文の明記が無ければ `unknown`（`false` にしない）。根拠は `flagEvidence` に原文抜粋（プレーンテキスト・200 文字以内）。
+- **`ledger`**: 列挙〜統合の各段階の ID 件数（完全性台帳）。`collectionPlan[]` は手順ゲート用の中間データで HTML / CSV には出さない。
+
+## 影響度の判定ルール（決定論・オーケストレーターが適用）
+
+影響度 = **重大度 S × 緊急度 U**。ワーカーはフラグと根拠を抽出するだけで、S / U / 影響度はオーケストレーターが次の規則で機械的に算出する。
+
+| 区分 | 条件 |
+| --- | --- |
+| S3 | `workloadStop=true` または `dataLossRisk=true` |
+| S1 | `autoMigration=true` かつ `workloadStop`・`dataLossRisk` のいずれも `true` でない |
+| S2 | 上記以外（`unknown` を含む・保守的） |
+| U3 | `status=retired` / `status=currentMonth` / `daysRemaining ≤ 90` |
+| U2 | `daysRemaining ≤ 365` |
+| U1 | `daysRemaining > 365` |
+
+| S \ U | U3 | U2 | U1 |
+| --- | --- | --- | --- |
+| S3 | High | High | Medium |
+| S2 | High | Medium | Low |
+| S1 | Medium | Low | Low |
+
+- `retireDate.precision=unknown` または `classificationStatus=insufficientEvidence` の場合は **`NeedsReview`（要確認）**（S / U は `null`）。
+- `classificationStatus=ambiguous` は算出するが、HTML に「分類に曖昧さあり」と表示する。
+- `impactReasonJa` に `S2（停止・消失の明記なし）× U2（残 200 日）→ Medium` の形式で根拠を記録する。
+
+## リンクの許可リスト（ワーカー・HTML の JS 共通）
+
+外部リンクは URL として解析し、次をすべて満たす場合のみ採用する（満たさないリンクは破棄し、HTML ではテキスト表示のみ）。
+
+- スキームが `https`（`http://aka.ms` 等は `https` に置き換えてから判定）で、ユーザー情報（`user:pass@`）を含まない。
+- ホストが次のいずれか:
+  - `microsoft.com` / `aka.ms` と完全一致、またはドット境界のサブドメイン（例 `learn.microsoft.com`。`evilmicrosoft.com` は不可）
+  - 完全一致: `portal.azure.com` / `ms.portal.azure.com` / `ai.azure.com` / `feedback.azure.com` / `azure.github.io`
+  - `github.com` は組織が `Azure` / `Azure-Samples` / `microsoft` / `MicrosoftDocs` のパスのみ
+- **SafeLinks**（`*.safelinks.protection.outlook.com`）は `url` クエリを復号した実 URL で再判定し、SafeLinks の URL 自体は保存しない（`data` パラメタに送信者情報が含まれうるため）。
+- `windows.net` / `azurewebsites.net` / `*.azure.com` の任意サブドメインなど、**利用者が作成できるホストは許可しない**。
+
+## トークン一覧（index.html 先頭コメントが正）
+
+- メタ: `META_DATETIME`(JST) / `AS_OF_DATE` / `SCOPE_LABEL` / `COLLECTION_METHOD` / `CAP_MRC_MCP` / `CAP_RC_API` / `CAP_LEARN_MCP`
+- サマリ: `NOTICE_COUNT` / `EVENT_COUNT` / `HIGH_COUNT` / `MEDIUM_COUNT` / `LOW_COUNT` / `NEEDS_REVIEW_COUNT` / `WITHIN_90_COUNT` / `RETIRED_COUNT` / `DATE_CONFLICT_COUNT` / `STATUS_HIGHLIGHT`
+- 完全性: `RETIREMENTS_TOTAL` / `INSCOPE_COUNT` / `COMPLEMENT_COUNT` / `ENUM_CONSISTENT` / `CANDIDATE_COUNT` / `PREFILTERED_OUT_COUNT` / `WORKER_RETURNED_COUNT` / `FAILED_COUNT` / `OUT_OF_SCOPE_COUNT` / `MERGED_COUNT`
+- データアイランド: `EVENTS_JSON` = `findings.json` の `events` 配列**そのもの**（要素・キーを省略・改名しない）
+- 区域: `CATEGORY_ROWS`（`CATEGORY` / `CAT_TOTAL` / `CAT_HIGH` / `CAT_MEDIUM` / `CAT_LOW` / `CAT_NEEDS_REVIEW`）・`QUARTER_ROWS`（`QUARTER` / `Q_TOTAL` / `Q_HIGH` / `Q_MEDIUM` / `Q_LOW` / `Q_NEEDS_REVIEW`）
+- CSV: `RETIREMENT_ROWS`（`events[]` を 1 行ずつ）
+
+## 生成手順（読み込み → 置換 → 検証）
+
+> **ファイル生成の機構**: テンプレは `read_file` の**参照元**で保存先に複製しない。置換・行複製で完成形にしてから `create_file` で **1 回だけ**書き出す。既存ファイルの更新は編集ツールを使う（同一パスへ 2 回目の `create_file` はしない）。大量データは骨組み＋一意センチネルを書き、編集ツールで分割追記する（`findings.json` の events / notices とデータアイランドは最大 20 件ずつ、CSV は最大 40 行ずつ。追記後にセンチネルを必ず削除。中断時は最後に書いた ID の次から再開する）。
+
+1. **index.html**: テンプレを読み、先頭コメントを削除して `{{TOKEN}}` を置換する。
+   - **`EVENTS_JSON`**: `findings.json` の `events` 配列を JSON として埋め込み、**文字列中の `<` `>` `&` をそれぞれ `\u003c` `\u003e` `\u0026` にエスケープ**する（閉じ script タグによる脱出防止）。データアイランド内に生の `<` が 1 文字も残らないこと。0 件なら `[]`。
+   - **HTML テキストのエスケープ**: `STATUS_HIGHLIGHT`・`CATEGORY`・`QUARTER`・`SCOPE_LABEL` 等は `&` `<` `>` `"` `'` を文字実体参照にする。取得した HTML をそのまま埋め込まない。
+   - **保持必須**: CSP の `<meta>`・`<style>`・`<span class="crumb">`・`<footer>`・各 `<thead>`・`<!-- SECTION: x -->` アンカー・**本文末尾のロジック用 `<script>`（1 文字も変えない。CSP の sha256 ハッシュで許可しているため、改変すると JavaScript が動かなくなる）**。
+2. **retirements.csv**: ヘッダはそのまま、`{{RETIREMENT_ROWS}}` を `events[]` の全要素（1 行 = 1 イベント・`events` と同順）に置換する。
+   - 配列（`noticeIds` / `categories` / `products` / `referenceUrls` 等）は ` | ` 区切り、`remediationJa` は `1) … 2) …` 形式、`milestones` は `<labelJa>:<date>` を ` | ` 区切り、真偽値（`dateConflict`）は `true` / `false`、`null` は空欄。
+   - **RFC 4180**: カンマ・改行・二重引用符を含む値は二重引用符で囲み、内部の `"` は `""` にする。
+   - **数式インジェクション対策**: テキスト列の値が `=` `+` `-` `@` で始まる場合は先頭に `'` を付ける（数値列 `daysRemaining` 等は対象外）。
+3. CSV を UTF-8 BOM 付きで再保存する（下記「文字コード」）。
+4. **検証ゲート**（下記）を端末の READ コマンドで実行し、不合格なら当該ファイルを修正して再検証する。
+
+## 空セクションの扱い
+
+- `<h2>`・テーブルは 0 件でも削除しない。`CATEGORY_ROWS` / `QUARTER_ROWS` が 0 件なら、先頭コメント記載のフォールバック行を 1 行だけ出力する。
+- 一覧（データアイランド）が 0 件なら `[]` を埋め込む（JS が「該当なし」行を表示する）。CSV は 0 件ならヘッダ行のみ。
+- サマリのカードは 0 でも数値 `0` を表示する。
+
+## 文字コード（CSV の文字化け対策）
+
+- `create_file` は UTF-8 BOM なしで書き出すため、Excel で文字化けしないよう CSV のみ BOM を付ける:
+  `$p="<CSVファイルのパス>"; $raw=Get-Content -Raw -Encoding utf8 $p; Set-Content -Path $p -Value $raw -Encoding utf8BOM -NoNewline`
+- 先頭 3 バイトが 239,187,191 になれば OK。`findings.json` / HTML / `progress.md` は BOM 不要。
+
+## 検証ゲート（端末の READ コマンド・全項目 PASS まで確定しない）
+
+`<reportFolder>` を実パスに置き換え、リポジトリのルートで実行する（ファイルを書き換えない読み取り専用の検証）。
+
+```powershell
+$d = '<reportFolder>'; $t = 'usecases/005-azure-retirement-report/report-template'
+$f = Get-Content -Raw -Encoding utf8 "$d/findings.json" | ConvertFrom-Json
+$h = (Get-Content -Raw -Encoding utf8 "$d/index.html") -replace "`r`n","`n"
+$tp = (Get-Content -Raw -Encoding utf8 "$t/index.html") -replace "`r`n","`n"
+$ids = @($f.events.eventId) -join ','
+$r = { param($name, $ok, $info) '{0} {1}{2}' -f ($(if ($ok) { 'PASS' } else { 'FAIL' })), $name, $(if ($info) { " :: $info" } else { '' }) }
+# 1) token / marker / sentinel residue = 0
+$res = @(Select-String -Path "$d/index.html","$d/retirements.csv" -Pattern '\{\{|<!-- BEGIN|<!-- END|_HERE -->|__ROWS_HERE__|__EVENTS_CHUNK__|__NOTICES_CHUNK__')
+& $r '1 no token residue' ($res.Count -eq 0) (($res | Select-Object -First 3) -join ' / ')
+# 2) SECTION anchors (6)
+$miss = @('summary','retirement-list','by-category','by-quarter','impact-rule','sources' | Where-Object { $h -notmatch "<!-- SECTION: $_ -->" })
+& $r '2 section anchors' ($miss.Count -eq 0) ($miss -join ',')
+# 3) data island: no raw '<', valid JSON, same eventIds in the same order as findings.events
+$island = [regex]::Match($h,'<script type="application/json" id="retirement-data">([\s\S]*?)</script>').Groups[1].Value
+& $r '3a island has no raw <' (-not $island.Contains('<'))
+$ev = @($island | ConvertFrom-Json)
+& $r '3b island eventIds = findings.events' ((@($ev.eventId) -join ',') -eq $ids) "island=$($ev.Count) findings=$(@($f.events).Count)"
+# 4) logic script and CSP meta identical to the template (comments stripped, newlines normalized)
+$strip = { param($s) [regex]::Replace($s,'<!--[\s\S]*?-->','') }
+$js = { param($s) [regex]::Match((& $strip $s),'<script>([\s\S]*?)</script>').Groups[1].Value }
+$csp = { param($s) [regex]::Match($s,'<meta http-equiv="Content-Security-Policy"[^>]*>').Value }
+& $r '4a logic script unchanged' ((& $js $h) -ceq (& $js $tp))
+& $r '4b CSP meta unchanged' ((& $csp $h) -ceq (& $csp $tp))
+# 5) CSV: BOM, header, row count and eventIds
+$bom = [IO.File]::ReadAllBytes("$d/retirements.csv")[0..2] -join ','
+& $r '5a csv BOM' ($bom -eq '239,187,191') $bom
+$hdrOut = (Get-Content -Encoding utf8 "$d/retirements.csv" -TotalCount 1).TrimStart([char]0xFEFF)
+& $r '5b csv header' ($hdrOut -ceq (Get-Content -Encoding utf8 "$t/retirements.csv" -TotalCount 1))
+$rows = @(Import-Csv -Encoding utf8 "$d/retirements.csv")
+& $r '5c csv rows/eventIds = findings.events' ((@($rows.eventId) -join ',') -eq $ids) "csv=$($rows.Count)"
+# 6) summary cards
+$cards = [regex]::Matches($h,'<div class="card[^"]*"><div class="n">([^<]*)</div><div class="l">') | ForEach-Object { $_.Groups[1].Value }
+$exp = @($f.summary.eventCount,$f.summary.highCount,$f.summary.mediumCount,$f.summary.lowCount,$f.summary.needsReviewCount,$f.summary.within90DaysCount,$f.summary.retiredCount,$f.summary.dateConflictCount) -join ','
+& $r '6 summary cards = findings.summary' (($cards -join ',') -eq $exp) ($cards -join ',')
+# 7) safety: no e-mail address, SafeLinks or <PLACEHOLDER> left
+$bad = @(Select-String -CaseSensitive -Path "$d/index.html","$d/retirements.csv" -Pattern '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|safelinks\.protection\.outlook\.com|<[A-Z_]{3,}>')
+& $r '7 no email/safelinks/placeholder' ($bad.Count -eq 0) (($bad | Select-Object -First 3) -join ' / ')
+# 8) folder contents (.work/ is removed by the orchestrator afterwards)
+$names = @(Get-ChildItem -Force $d | Where-Object Name -ne '.work' | Select-Object -ExpandProperty Name | Sort-Object)
+& $r '8 folder contents' (($names -join ',') -eq 'findings.json,index.html,progress.md,retirements.csv') ($names -join ',')
+```
+
+- コマンドで検査しない項目は目視で確認する: カテゴリ別 / 四半期別の行が `findings.json` の `byCategory` / `byQuarter` と一致すること、総評が `summary.statusHighlight` と一致すること。

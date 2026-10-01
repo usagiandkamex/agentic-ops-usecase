@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<!--
+  Azure リタイア情報レポート — index.html テンプレート（ユースケース 005・単一ページ）
+  使い方:
+  - レポート生成サブエージェント(azure-retirement-report-writer)はこの HTML を read_file で読み、下記トークンを findings.json の実値に置換して create_file で生成する（HTML を自作しない・生成スクリプト不要）。
+  - 出力: reports/<YYYYMMDD-HHmmss>/index.html（1 ファイルのみ）。CSV は retirements.csv、データ源は findings.json。
+  - このテンプレは参照元。{{TOKEN}} 置換と BEGIN X / END X 区域の行複製だけで完成させ、create_file で 1 回書き出す（大量データはセンチネル＋編集ツールで追記してよい）。
+  - 保持必須: CSP の meta 要素の値・style ブロック・header の crumb・footer・各テーブルの thead・SECTION: x アンカー・本文末尾のロジック用 script 要素（1 文字も変えない。CSP の sha256 ハッシュで許可しているため、改変すると JavaScript が動かなくなる）。
+  - 出力に {{...}} や BEGIN / END マーカー、この先頭コメントを残さないこと。
+  トークン（メタ）: META_DATETIME(JST) / AS_OF_DATE / SCOPE_LABEL / COLLECTION_METHOD / CAP_MRC_MCP / CAP_RC_API / CAP_LEARN_MCP
+  トークン（サマリ）: NOTICE_COUNT / EVENT_COUNT / HIGH_COUNT / MEDIUM_COUNT / LOW_COUNT / NEEDS_REVIEW_COUNT / WITHIN_90_COUNT / RETIRED_COUNT / DATE_CONFLICT_COUNT / STATUS_HIGHLIGHT
+  トークン（完全性）: RETIREMENTS_TOTAL / INSCOPE_COUNT / COMPLEMENT_COUNT / ENUM_CONSISTENT / CANDIDATE_COUNT / PREFILTERED_OUT_COUNT / WORKER_RETURNED_COUNT / FAILED_COUNT / OUT_OF_SCOPE_COUNT / MERGED_COUNT
+  データアイランド: EVENTS_JSON = findings.json の events 配列そのもの（要素・キーを省略しない）。JSON 文字列中の山括弧と & は必ず \u003c \u003e \u0026 にエスケープする（閉じ script タグによる脱出防止）。0 件なら []。
+  区域: CATEGORY_ROWS（行トークン CATEGORY / CAT_TOTAL / CAT_HIGH / CAT_MEDIUM / CAT_LOW / CAT_NEEDS_REVIEW）
+        QUARTER_ROWS（行トークン QUARTER / Q_TOTAL / Q_HIGH / Q_MEDIUM / Q_LOW / Q_NEEDS_REVIEW）
+  エスケープ: HTML 本文に差し込むテキスト（STATUS_HIGHLIGHT・CATEGORY 等）はアンパサンド・山括弧・二重 / 単一引用符を文字実体参照にエスケープする。外部取得の HTML をそのまま埋め込まない。
+  サマリのカードは 0 でも数値 0 を表示する。
+  空区域の扱い: 0 件でも <h2>・テーブルを削除しない。tbody を空にせず、下記フォールバック行を 1 行だけ出力する。
+    - CATEGORY_ROWS 0 件: <tr><td colspan="6" class="empty">該当なし（対象期間のリタイア情報はありません）</td></tr>
+    - QUARTER_ROWS 0 件:  <tr><td colspan="6" class="empty">該当なし（対象期間のリタイア情報はありません）</td></tr>
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-l7/HFcQLDqKV/c/aYlg1+T2T9Vc+/WlcsPcjzSru9vY='; img-src data:; base-uri 'none'; form-action 'none'">
+<title>Azure リタイア情報レポート</title>
+<style>
+  :root{--blue:#0078D4;--dark:#243A5E;--bg:#faf9f8;--card:#fff;--bd:#edebe9;--tx:#201f1e;--sub:#605e5c;--good:#107C10;--warn:#F7A600;--bad:#D13438;--rev:#8764B8;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","Yu Gothic UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);font-size:14px;line-height:1.5}
+  header.topbar{background:linear-gradient(90deg,var(--dark),var(--blue));color:#fff;padding:14px 28px;display:flex;align-items:center;gap:12px}
+  header.topbar h1{font-size:18px;font-weight:600;margin:0}
+  header.topbar .crumb{margin-left:auto;font-size:12px;opacity:.9}
+  main{max-width:1280px;margin:0 auto;padding:24px 28px 48px}
+  .meta{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px 24px;margin-bottom:24px}
+  .meta div{font-size:13px}.meta .k{color:var(--sub);margin-right:6px}
+  .meta code{background:#f3f2f1;padding:1px 6px;border-radius:4px}
+  h2{font-size:16px;font-weight:600;margin:28px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  .cards{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:8px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px 18px;min-width:130px;flex:1 1 130px}
+  .card .n{font-size:26px;font-weight:700;line-height:1}
+  .card .l{font-size:12px;color:var(--sub);margin-top:4px}
+  .card.high .n{color:var(--bad)}.card.medium .n{color:#8a6100}.card.low .n{color:var(--good)}.card.review .n{color:var(--rev)}
+  .highlight{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px 18px;margin:8px 0 20px}
+  .highlight h3{font-size:15px;margin:0 0 8px;padding-left:9px;border-left:4px solid var(--good)}
+  .highlight p{margin:0;font-size:13px}
+  .filters{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:flex-end;margin-bottom:10px}
+  .filters label{display:flex;flex-direction:column;font-size:12px;color:var(--sub);gap:3px}
+  .filters select,.filters input[type=search]{font:inherit;font-size:13px;padding:5px 8px;border:1px solid #c8c6c4;border-radius:4px;min-width:180px;max-width:280px;color:var(--tx);background:#fff}
+  .filters fieldset{border:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+  .filters fieldset legend{font-size:12px;color:var(--sub);padding:0}
+  .filters fieldset div{display:flex;gap:10px;font-size:13px;color:var(--tx)}
+  .filters fieldset label{flex-direction:row;align-items:center;gap:4px;color:var(--tx);font-size:13px}
+  .filters button{font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--blue);border-radius:4px;background:#fff;color:var(--blue);cursor:pointer}
+  .filters .count{margin-left:auto;font-size:13px;font-weight:600;color:var(--dark)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:8px;overflow:hidden;margin:6px 0 20px;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd);vertical-align:top}
+  th{background:#f3f2f1;font-weight:600;color:var(--sub)}
+  th button.sort{font:inherit;font-weight:600;color:var(--sub);background:none;border:none;padding:0;cursor:pointer}
+  th button.sort::after{content:" \2195";opacity:.4}
+  th button.sort[data-dir=asc]::after{content:" \2191";opacity:1}
+  th button.sort[data-dir=desc]::after{content:" \2193";opacity:1}
+  tr:last-child td{border-bottom:none}
+  td.nowrap{white-space:nowrap}
+  .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#fff;white-space:nowrap}
+  .imp-High{background:var(--bad)}.imp-Medium{background:var(--warn);color:#201f1e}.imp-Low{background:var(--good)}.imp-NeedsReview{background:var(--rev)}
+  .badge{display:inline-block;padding:0 6px;margin:2px 4px 0 0;border-radius:4px;font-size:11px;border:1px solid var(--bd);background:#f3f2f1;color:var(--sub);white-space:nowrap}
+  .badge.on{background:#fde7e9;border-color:#f1bbbc;color:var(--bad);font-weight:600}
+  .badge.auto{background:#dff6dd;border-color:#a7e3a5;color:var(--good);font-weight:600}
+  .badge.unk{border-style:dashed}
+  .badge.conflict{background:#fff4ce;border-color:#f7d36b;color:#8a6100;font-weight:600}
+  .sub{color:var(--sub);font-size:12px}
+  .ttl{font-weight:600}
+  details summary{cursor:pointer;color:var(--blue)}
+  details ol,details ul{margin:6px 0 6px 18px;padding:0}
+  .evidence{margin-top:6px;padding:6px 8px;background:#f8f8f8;border-left:3px solid var(--bd);font-size:12px;color:var(--sub)}
+  a{color:var(--blue)}
+  .note{color:var(--sub);font-size:12px;margin:4px 0 16px}
+  .warnbox{background:#fff4ce;border:1px solid #f7d36b;border-radius:6px;padding:8px 12px;color:#5c4400}
+  td.empty{text-align:center;color:var(--sub);font-style:italic}
+  table.matrix td,table.matrix th{text-align:center}
+  footer{color:var(--sub);font-size:12px;margin-top:32px;border-top:1px solid var(--bd);padding-top:12px}
+</style>
+</head>
+<body>
+<header class="topbar"><h1>Azure リタイア情報レポート</h1><span class="crumb">公開情報のみ（Azure リソース非参照）· Microsoft Release Communications / Azure Updates</span></header>
+<main>
+  <div class="meta">
+    <div><span class="k">作成日時(JST)</span>{{META_DATETIME}}</div>
+    <div><span class="k">基準日(JST)</span>{{AS_OF_DATE}}</div>
+    <div><span class="k">収集範囲</span>{{SCOPE_LABEL}}</div>
+    <div><span class="k">収集手段</span>{{COLLECTION_METHOD}}</div>
+    <div><span class="k">MRC MCP</span>{{CAP_MRC_MCP}}</div>
+    <div><span class="k">公開 API（フォールバック）</span>{{CAP_RC_API}}</div>
+    <div><span class="k">Microsoft Learn MCP（対応策補完）</span>{{CAP_LEARN_MCP}}</div>
+    <div><span class="k">対象投稿 / リタイアイベント</span>{{NOTICE_COUNT}} 件 / {{EVENT_COUNT}} 件</div>
+  </div>
+  <p class="note">情報源は <a href="https://azure.microsoft.com/ja-jp/updates/">Azure の更新情報</a>（Retirements タグ）と <a href="https://learn.microsoft.com/microsoft-365/admin/manage/mrc-mcp">Microsoft Release Communications MCP</a> の公開情報のみ。Azure リソース・サブスクリプションには一切アクセスしていない。影響度は下記「影響度の判定ルール」による<strong>一般的な目安</strong>で、自組織の利用有無は別途確認が必要。要約・対応策は英語原文の日本語要約であり、最終判断は必ず原文（各行のリンク）を確認すること。</p>
+
+  <!-- SECTION: summary -->
+  <h2>サマリ</h2>
+  <div class="cards">
+    <div class="card"><div class="n">{{EVENT_COUNT}}</div><div class="l">リタイアイベント</div></div>
+    <div class="card high"><div class="n">{{HIGH_COUNT}}</div><div class="l">影響度 High</div></div>
+    <div class="card medium"><div class="n">{{MEDIUM_COUNT}}</div><div class="l">影響度 Medium</div></div>
+    <div class="card low"><div class="n">{{LOW_COUNT}}</div><div class="l">影響度 Low</div></div>
+    <div class="card review"><div class="n">{{NEEDS_REVIEW_COUNT}}</div><div class="l">要確認</div></div>
+    <div class="card"><div class="n">{{WITHIN_90_COUNT}}</div><div class="l">90 日以内（当月含む）</div></div>
+    <div class="card"><div class="n">{{RETIRED_COUNT}}</div><div class="l">リタイア済み（範囲内）</div></div>
+    <div class="card"><div class="n">{{DATE_CONFLICT_COUNT}}</div><div class="l">日付の記載差異あり</div></div>
+  </div>
+  <div class="highlight">
+    <h3>総評</h3>
+    <p>{{STATUS_HIGHLIGHT}}</p>
+  </div>
+
+  <!-- SECTION: retirement-list -->
+  <h2>リタイア一覧</h2>
+  <noscript><p class="note warnbox">一覧の表示とフィルタには JavaScript が必要です。同じフォルダの <a href="retirements.csv">retirements.csv</a>（Excel で開けます）を参照してください。</p></noscript>
+  <div id="filters" class="filters" hidden>
+    <label>カテゴリ<select id="f-category"><option value="">すべて</option></select></label>
+    <label>製品（リソースの種類）<select id="f-product"><option value="">すべて</option></select></label>
+    <fieldset>
+      <legend>影響度</legend>
+      <div>
+        <label><input type="checkbox" class="f-impact" value="High" checked>High</label>
+        <label><input type="checkbox" class="f-impact" value="Medium" checked>Medium</label>
+        <label><input type="checkbox" class="f-impact" value="Low" checked>Low</label>
+        <label><input type="checkbox" class="f-impact" value="NeedsReview" checked>要確認</label>
+      </div>
+    </fieldset>
+    <label>リタイア時期<select id="f-period">
+      <option value="">すべて</option>
+      <option value="retired">リタイア済み</option>
+      <option value="d90">90 日以内（当月含む）</option>
+      <option value="d180">180 日以内（当月含む）</option>
+      <option value="d365">1 年以内（当月含む）</option>
+      <option value="over365">1 年超</option>
+      <option value="unknown">日付不明</option>
+    </select></label>
+    <label>キーワード<input type="search" id="f-keyword" placeholder="例: TLS / Basic / v1 / 移行先"></label>
+    <button type="button" id="f-reset">リセット</button>
+    <span id="f-count" class="count"></span>
+  </div>
+  <table id="ret-table">
+    <thead><tr><th><button type="button" class="sort" data-sort="date">リタイア日</button></th><th><button type="button" class="sort" data-sort="days">残日数</button></th><th><button type="button" class="sort" data-sort="impact">影響度</button></th><th><button type="button" class="sort" data-sort="category">カテゴリ / 製品</button></th><th><button type="button" class="sort" data-sort="title">内容</button></th><th>影響種別</th><th>対応策</th></tr></thead>
+    <tbody id="ret-body">
+      <tr><td colspan="7" class="empty">一覧を表示するには JavaScript を有効にするか、retirements.csv を参照してください。</td></tr>
+    </tbody>
+  </table>
+  <p class="note">フィルタはカテゴリ・製品・影響度・時期・キーワードの<strong>すべてを満たす</strong>行を表示する（影響度のチェックはいずれかに一致）。複数カテゴリ / 製品に属するイベントは、いずれかに一致すれば表示する。残日数は基準日から算出し、月精度（「月のみ」）の場合は月初基準の保守的な値。列見出しをクリックすると並べ替えできる。全件の機械可読データは <a href="retirements.csv">retirements.csv</a>。</p>
+  <script type="application/json" id="retirement-data">{{EVENTS_JSON}}</script>
+
+  <!-- SECTION: by-category -->
+  <h2>カテゴリ別件数</h2>
+  <table>
+    <thead><tr><th>カテゴリ</th><th>合計</th><th>High</th><th>Medium</th><th>Low</th><th>要確認</th></tr></thead>
+    <tbody>
+      <!-- BEGIN CATEGORY_ROWS -->
+      <tr><td>{{CATEGORY}}</td><td>{{CAT_TOTAL}}</td><td>{{CAT_HIGH}}</td><td>{{CAT_MEDIUM}}</td><td>{{CAT_LOW}}</td><td>{{CAT_NEEDS_REVIEW}}</td></tr>
+      <!-- END CATEGORY_ROWS -->
+    </tbody>
+  </table>
+  <p class="note">複数カテゴリに属するイベントは各カテゴリで計上するため、合計はイベント数を上回ることがある。カテゴリ情報が無い投稿は本文から推定したカテゴリ、推定できない場合は「Uncategorized」で計上。</p>
+
+  <!-- SECTION: by-quarter -->
+  <h2>リタイア時期別件数（四半期）</h2>
+  <table>
+    <thead><tr><th>四半期（リタイア日・JST）</th><th>合計</th><th>High</th><th>Medium</th><th>Low</th><th>要確認</th></tr></thead>
+    <tbody>
+      <!-- BEGIN QUARTER_ROWS -->
+      <tr><td>{{QUARTER}}</td><td>{{Q_TOTAL}}</td><td>{{Q_HIGH}}</td><td>{{Q_MEDIUM}}</td><td>{{Q_LOW}}</td><td>{{Q_NEEDS_REVIEW}}</td></tr>
+      <!-- END QUARTER_ROWS -->
+    </tbody>
+  </table>
+
+  <!-- SECTION: impact-rule -->
+  <h2>影響度の判定ルール</h2>
+  <p class="note">影響度 = 重大度 S（何が起きるか）× 緊急度 U（いつ起きるか）。S は本文の明記に基づくフラグから決定論的に算出し、明記が無いフラグは「不明」として保守的に扱う。</p>
+  <table>
+    <thead><tr><th>区分</th><th>条件</th></tr></thead>
+    <tbody>
+      <tr><td>S3（重大）</td><td>リタイア後にワークロードが停止・利用不可になる、またはデータ / リソースが削除・消失すると本文に明記</td></tr>
+      <tr><td>S2（中）</td><td>上記・下記のいずれにも当たらない（停止・消失が「不明」を含む。利用者側の移行作業が必要）</td></tr>
+      <tr><td>S1（軽微）</td><td>Microsoft による自動移行 / 自動アップグレードが本文に明記され、停止・消失の明記が無い</td></tr>
+      <tr><td>U3（至急）</td><td>リタイア済み、当月（日付未確定）、または残り 90 日以内</td></tr>
+      <tr><td>U2（計画）</td><td>残り 365 日以内</td></tr>
+      <tr><td>U1（中長期）</td><td>残り 365 日超</td></tr>
+      <tr><td>要確認</td><td>リタイア日が特定できない、または本文から影響を判定する根拠が不足</td></tr>
+    </tbody>
+  </table>
+  <table class="matrix">
+    <thead><tr><th>S \ U</th><th>U3（至急）</th><th>U2（計画）</th><th>U1（中長期）</th></tr></thead>
+    <tbody>
+      <tr><th>S3（重大）</th><td><span class="pill imp-High">High</span></td><td><span class="pill imp-High">High</span></td><td><span class="pill imp-Medium">Medium</span></td></tr>
+      <tr><th>S2（中）</th><td><span class="pill imp-High">High</span></td><td><span class="pill imp-Medium">Medium</span></td><td><span class="pill imp-Low">Low</span></td></tr>
+      <tr><th>S1（軽微）</th><td><span class="pill imp-Medium">Medium</span></td><td><span class="pill imp-Low">Low</span></td><td><span class="pill imp-Low">Low</span></td></tr>
+    </tbody>
+  </table>
+
+  <!-- SECTION: sources -->
+  <h2>情報源と収集の完全性</h2>
+  <table>
+    <thead><tr><th>項目</th><th>件数 / 状態</th><th>説明</th></tr></thead>
+    <tbody>
+      <tr><td>Retirements タグの全投稿</td><td>{{RETIREMENTS_TOTAL}}</td><td>Azure Updates で Retirements タグが付いた投稿の総数（収集時点）</td></tr>
+      <tr><td>年フィルタ内 / 補集合</td><td>{{INSCOPE_COUNT}} / {{COMPLEMENT_COUNT}}（整合: {{ENUM_CONSISTENT}}）</td><td>年フィルタ内と補集合の合計が全投稿数と一致することで列挙漏れが無いことを確認</td></tr>
+      <tr><td>詳細取得の対象投稿</td><td>{{CANDIDATE_COUNT}}</td><td>収集範囲（6 か月のマージン付き）に重なる投稿</td></tr>
+      <tr><td>事前除外</td><td>{{PREFILTERED_OUT_COUNT}}</td><td>リタイア月が範囲より前の投稿</td></tr>
+      <tr><td>詳細取得・要約済み</td><td>{{WORKER_RETURNED_COUNT}}</td><td>本文を取得し、日付・影響・対応策を抽出できた投稿</td></tr>
+      <tr><td>取得失敗</td><td>{{FAILED_COUNT}}</td><td>再試行後も取得できなかった投稿（findings.json の ledger.failedNoticeIds）</td></tr>
+      <tr><td>抽出後の範囲外</td><td>{{OUT_OF_SCOPE_COUNT}}</td><td>本文のリタイア日が収集範囲外だったイベント</td></tr>
+      <tr><td>同一イベントとして統合</td><td>{{MERGED_COUNT}}</td><td>再告知・日付更新など、本文の明記に基づき 1 イベントに統合した件数</td></tr>
+    </tbody>
+  </table>
+
+  <footer>
+    本レポートは基準日（{{AS_OF_DATE}}）時点の公開情報の要約であり、リタイア日・対応策は Microsoft により変更されることがある。影響度は一般的な目安で、自組織での利用有無・影響は別途確認すること。本レポートはローカル限定（<code>.gitignore</code> 済み）。
+  </footer>
+</main>
+<script>
+(function () {
+  'use strict';
+  var IMPACT_ORDER = { High: 0, Medium: 1, Low: 2, NeedsReview: 3 };
+  var IMPACT_LABEL = { High: 'High', Medium: 'Medium', Low: 'Low', NeedsReview: '要確認' };
+  var TYPE_LABEL = { ServiceRetirement: 'サービス廃止', SkuRetirement: 'SKU・シリーズ廃止', VersionRetirement: '版・API・ランタイム廃止', FeatureRetirement: '機能廃止', Unknown: '不明' };
+  var STATUS_LABEL = { retired: 'リタイア済み', currentMonth: '当月（日付未確定）', upcoming: '予定', unknown: '日付不明' };
+  var FLAG_LABEL = { workloadStop: '停止', dataLossRisk: 'データ消失', autoMigration: '自動移行' };
+  var ALLOWED_SUFFIXES = ['microsoft.com', 'aka.ms'];
+  var ALLOWED_HOSTS = ['portal.azure.com', 'ms.portal.azure.com', 'ai.azure.com', 'feedback.azure.com', 'azure.github.io'];
+  var GITHUB_ORGS = ['azure', 'azure-samples', 'microsoft', 'microsoftdocs'];
+
+  function arr(v) { return Array.isArray(v) ? v : []; }
+  function str(v) { return v === null || v === undefined ? '' : String(v); }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) { e.className = cls; }
+    if (text !== undefined && text !== null) { e.textContent = String(text); }
+    return e;
+  }
+  function safeUrl(u) {
+    var x;
+    try { x = new URL(str(u)); } catch (e) { return null; }
+    if (x.protocol !== 'https:' || x.username || x.password) { return null; }
+    var h = x.hostname.toLowerCase();
+    var ok = ALLOWED_HOSTS.indexOf(h) >= 0 || ALLOWED_SUFFIXES.some(function (d) { return h === d || h.slice(-(d.length + 1)) === '.' + d; });
+    if (!ok && h === 'github.com') {
+      var org = x.pathname.split('/')[1] || '';
+      ok = GITHUB_ORGS.indexOf(org.toLowerCase()) >= 0;
+    }
+    return ok ? x.href : null;
+  }
+  function link(url, text) {
+    var s = safeUrl(url);
+    if (!s) { return el('span', null, text); }
+    var a = el('a', null, text);
+    a.href = s;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    return a;
+  }
+  function fmtDate(d) {
+    if (!d || d.precision === 'unknown' || !d.start) { return '不明'; }
+    if (d.precision === 'month') { return str(d.start).slice(0, 7) + '（月のみ）'; }
+    return str(d.start);
+  }
+  function fmtDays(ev) {
+    var n = ev.daysRemaining;
+    if (typeof n !== 'number' || ev.status === 'unknown') { return '—'; }
+    if (ev.status === 'currentMonth') { return '当月'; }
+    var approx = ev.retireDate && ev.retireDate.precision === 'month' ? '約 ' : '';
+    if (n < 0) { return '経過 ' + approx + (-n) + ' 日'; }
+    return approx + n + ' 日';
+  }
+  function inPeriod(ev, p) {
+    var n = ev.daysRemaining;
+    var up = ev.status === 'upcoming' && typeof n === 'number';
+    switch (p) {
+      case '': return true;
+      case 'retired': return ev.status === 'retired';
+      case 'd90': return ev.status === 'currentMonth' || (up && n <= 90);
+      case 'd180': return ev.status === 'currentMonth' || (up && n <= 180);
+      case 'd365': return ev.status === 'currentMonth' || (up && n <= 365);
+      case 'over365': return up && n > 365;
+      case 'unknown': return ev.status === 'unknown';
+      default: return true;
+    }
+  }
+
+  var tbody = document.getElementById('ret-body');
+  var raw = document.getElementById('retirement-data');
+  var events;
+  try { events = JSON.parse(raw ? raw.textContent : '[]'); } catch (e) { events = null; }
+  if (!Array.isArray(events)) {
+    tbody.textContent = '';
+    var er = el('tr');
+    var ec = el('td', 'empty', 'データの読み込みに失敗しました。retirements.csv または findings.json を参照してください。');
+    ec.colSpan = 7;
+    er.appendChild(ec);
+    tbody.appendChild(er);
+    return;
+  }
+
+  function buildRow(ev) {
+    var tr = el('tr');
+    var d = ev.retireDate || {};
+
+    var tdDate = el('td', 'nowrap');
+    tdDate.appendChild(el('div', 'ttl', fmtDate(d)));
+    tdDate.appendChild(el('div', 'sub', STATUS_LABEL[ev.status] || str(ev.status)));
+    if (ev.dateConflict === true) {
+      var cf = el('span', 'badge conflict', '日付の記載差異');
+      cf.title = str(ev.dateNoteJa);
+      tdDate.appendChild(cf);
+    }
+    arr(ev.milestones).forEach(function (m) {
+      tdDate.appendChild(el('div', 'sub', str(m.labelJa) + ': ' + str(m.date) + (m.precision === 'month' ? '（月のみ）' : '')));
+    });
+    tr.appendChild(tdDate);
+
+    tr.appendChild(el('td', 'nowrap', fmtDays(ev)));
+
+    var tdImp = el('td', 'nowrap');
+    var imp = IMPACT_LABEL[ev.impact] ? ev.impact : 'NeedsReview';
+    var pill = el('span', 'pill imp-' + imp, IMPACT_LABEL[imp]);
+    pill.title = str(ev.impactReasonJa);
+    tdImp.appendChild(pill);
+    if (typeof ev.severityScore === 'number' && typeof ev.urgencyScore === 'number') {
+      tdImp.appendChild(el('div', 'sub', 'S' + ev.severityScore + ' × U' + ev.urgencyScore));
+    }
+    if (ev.classificationStatus === 'ambiguous') { tdImp.appendChild(el('div', 'sub', '分類に曖昧さあり')); }
+    tr.appendChild(tdImp);
+
+    var tdCat = el('td');
+    tdCat.appendChild(el('div', null, (arr(ev.categories).join(' / ') || 'Uncategorized') + (ev.categorySource === 'inferred' ? '（推定）' : '')));
+    tdCat.appendChild(el('div', 'sub', arr(ev.products).join(' / ') + (ev.productSource === 'inferred' ? '（推定）' : '')));
+    tr.appendChild(tdCat);
+
+    var tdBody = el('td');
+    var t = el('div', 'ttl');
+    t.appendChild(link(ev.updateUrl, str(ev.titleJa) || str(ev.title)));
+    tdBody.appendChild(t);
+    if (ev.titleJa && ev.title) { tdBody.appendChild(el('div', 'sub', str(ev.title))); }
+    if (ev.summaryJa) { tdBody.appendChild(el('div', null, str(ev.summaryJa))); }
+    if (ev.affectedScopeJa) { tdBody.appendChild(el('div', 'sub', '対象: ' + str(ev.affectedScopeJa))); }
+    var rel = arr(ev.noticeIds).concat(arr(ev.relatedNoticeIds)).filter(function (id) { return str(id) !== str(ev.primaryNoticeId); });
+    if (rel.length) {
+      var rd = el('div', 'sub', '関連投稿: ');
+      rel.forEach(function (id, i) {
+        if (i) { rd.appendChild(document.createTextNode(', ')); }
+        rd.appendChild(link('https://azure.microsoft.com/ja-jp/updates/?id=' + encodeURIComponent(str(id)), str(id)));
+      });
+      tdBody.appendChild(rd);
+    }
+    tr.appendChild(tdBody);
+
+    var tdType = el('td');
+    tdType.appendChild(el('div', null, TYPE_LABEL[ev.impactType] || str(ev.impactType) || '不明'));
+    var flags = ev.flags || {};
+    ['workloadStop', 'dataLossRisk', 'autoMigration'].forEach(function (k) {
+      var v = str(flags[k]);
+      if (v === 'true') {
+        tdType.appendChild(el('span', k === 'autoMigration' ? 'badge auto' : 'badge on', FLAG_LABEL[k]));
+      } else if (v === 'unknown' && k !== 'autoMigration') {
+        tdType.appendChild(el('span', 'badge unk', FLAG_LABEL[k] + ' 不明'));
+      }
+    });
+    tr.appendChild(tdType);
+
+    var tdRem = el('td');
+    var det = el('details');
+    det.appendChild(el('summary', null, ev.migrationTarget ? '移行先: ' + str(ev.migrationTarget) : '対応策を表示'));
+    var steps = arr(ev.remediationJa);
+    if (ev.remediationStatus === 'notFound' || !steps.length) {
+      det.appendChild(el('div', 'sub', '公式な必須対応を本文から特定できず・要確認（原文を参照）'));
+    }
+    if (steps.length) {
+      var ol = el('ol');
+      steps.forEach(function (s) { ol.appendChild(el('li', null, str(s))); });
+      det.appendChild(ol);
+    }
+    if (ev.remediationStatus === 'supplementedByLearn') { det.appendChild(el('div', 'sub', '※ 本文に手順の明記が無いため Microsoft Learn の公式ドキュメントで補完')); }
+    var links = arr(ev.referenceLinks);
+    if (links.length) {
+      var ul = el('ul');
+      links.forEach(function (l) {
+        var li = el('li');
+        li.appendChild(link(l.url, str(l.titleJa) || str(l.url)));
+        if (l.source === 'LearnSearch') { li.appendChild(el('span', 'sub', '（Learn 補完）')); }
+        ul.appendChild(li);
+      });
+      det.appendChild(ul);
+    }
+    var evd = el('div', 'evidence');
+    evd.appendChild(el('div', null, '判定根拠（原文抜粋）'));
+    if (d.evidence) { evd.appendChild(el('div', null, '日付: ' + str(d.evidence))); }
+    var fe = ev.flagEvidence || {};
+    ['workloadStop', 'dataLossRisk', 'autoMigration'].forEach(function (k) {
+      if (fe[k]) { evd.appendChild(el('div', null, FLAG_LABEL[k] + ': ' + str(fe[k]))); }
+    });
+    if (ev.dateNoteJa) { evd.appendChild(el('div', null, '日付メモ: ' + str(ev.dateNoteJa))); }
+    if (ev.impactReasonJa) { evd.appendChild(el('div', null, '影響度: ' + str(ev.impactReasonJa))); }
+    det.appendChild(evd);
+    tdRem.appendChild(det);
+    tr.appendChild(tdRem);
+    return tr;
+  }
+
+  var rows = events.map(function (ev, i) {
+    var hay = [ev.title, ev.titleJa, ev.summaryJa, ev.affectedScopeJa, ev.migrationTarget, arr(ev.products).join(' '), arr(ev.categories).join(' '), arr(ev.remediationJa).join(' '), arr(ev.noticeIds).join(' ')].map(str).join(' ').toLowerCase();
+    return { ev: ev, tr: buildRow(ev), idx: i, hay: hay };
+  });
+
+  var fCat = document.getElementById('f-category');
+  var fProd = document.getElementById('f-product');
+  var fPeriod = document.getElementById('f-period');
+  var fKw = document.getElementById('f-keyword');
+  var fCount = document.getElementById('f-count');
+  var fImp = Array.prototype.slice.call(document.querySelectorAll('.f-impact'));
+
+  function uniqSorted(list) {
+    var seen = {};
+    var out = [];
+    list.forEach(function (v) { v = str(v); if (v && !seen[v]) { seen[v] = true; out.push(v); } });
+    return out.sort(function (a, b) { return a.localeCompare(b); });
+  }
+  function fillSelect(sel, values) {
+    var cur = sel.value;
+    while (sel.options.length > 1) { sel.remove(1); }
+    values.forEach(function (v) { sel.add(new Option(v, v)); });
+    sel.value = values.indexOf(cur) >= 0 ? cur : '';
+  }
+  function catsOf(ev) { var c = arr(ev.categories); return c.length ? c : ['Uncategorized']; }
+
+  fillSelect(fCat, uniqSorted([].concat.apply([], rows.map(function (r) { return catsOf(r.ev); }))));
+  function refreshProducts() {
+    var c = fCat.value;
+    var src = rows.filter(function (r) { return !c || catsOf(r.ev).indexOf(c) >= 0; });
+    fillSelect(fProd, uniqSorted([].concat.apply([], src.map(function (r) { return arr(r.ev.products); }))));
+  }
+  refreshProducts();
+
+  var sortKey = 'date';
+  var sortDir = 'asc';
+  function keyOf(r) {
+    var ev = r.ev;
+    switch (sortKey) {
+      case 'days': return typeof ev.daysRemaining === 'number' ? ev.daysRemaining : Number.MAX_SAFE_INTEGER;
+      case 'impact': return IMPACT_ORDER.hasOwnProperty(ev.impact) ? IMPACT_ORDER[ev.impact] : 9;
+      case 'category': return (catsOf(ev)[0] + ' ' + arr(ev.products).join(' ')).toLowerCase();
+      case 'title': return (str(ev.titleJa) || str(ev.title)).toLowerCase();
+      default: return (ev.retireDate && ev.retireDate.start) ? str(ev.retireDate.start) : '9999-12-31';
+    }
+  }
+  function cmp(a, b) {
+    var ka = keyOf(a);
+    var kb = keyOf(b);
+    var c = typeof ka === 'number' && typeof kb === 'number' ? ka - kb : String(ka).localeCompare(String(kb));
+    if (sortDir === 'desc') { c = -c; }
+    if (c === 0) {
+      var ia = IMPACT_ORDER.hasOwnProperty(a.ev.impact) ? IMPACT_ORDER[a.ev.impact] : 9;
+      var ib = IMPACT_ORDER.hasOwnProperty(b.ev.impact) ? IMPACT_ORDER[b.ev.impact] : 9;
+      c = ia - ib || a.idx - b.idx;
+    }
+    return c;
+  }
+
+  function apply() {
+    var c = fCat.value;
+    var p = fProd.value;
+    var per = fPeriod.value;
+    var imps = fImp.filter(function (x) { return x.checked; }).map(function (x) { return x.value; });
+    var terms = fKw.value.toLowerCase().split(/\s+/).filter(Boolean);
+    var shown = 0;
+    rows.slice().sort(cmp).forEach(function (r) {
+      var ev = r.ev;
+      var imp = IMPACT_LABEL[ev.impact] ? ev.impact : 'NeedsReview';
+      var ok = (!c || catsOf(ev).indexOf(c) >= 0) &&
+        (!p || arr(ev.products).indexOf(p) >= 0) &&
+        imps.indexOf(imp) >= 0 &&
+        inPeriod(ev, per) &&
+        terms.every(function (t) { return r.hay.indexOf(t) >= 0; });
+      r.tr.hidden = !ok;
+      if (ok) { shown++; }
+      tbody.appendChild(r.tr);
+    });
+    emptyRow.hidden = shown !== 0;
+    tbody.appendChild(emptyRow);
+    fCount.textContent = '表示 ' + shown + ' / 全 ' + rows.length + ' 件';
+  }
+
+  tbody.textContent = '';
+  var emptyRow = el('tr');
+  var emptyCell = el('td', 'empty', rows.length ? '条件に一致するリタイア情報はありません' : '該当なし（対象期間のリタイア情報はありません）');
+  emptyCell.colSpan = 7;
+  emptyRow.appendChild(emptyCell);
+
+  fCat.addEventListener('change', function () { refreshProducts(); apply(); });
+  [fProd, fPeriod].forEach(function (x) { x.addEventListener('change', apply); });
+  fImp.forEach(function (x) { x.addEventListener('change', apply); });
+  fKw.addEventListener('input', apply);
+  document.getElementById('f-reset').addEventListener('click', function () {
+    fCat.value = '';
+    refreshProducts();
+    fProd.value = '';
+    fPeriod.value = '';
+    fKw.value = '';
+    fImp.forEach(function (x) { x.checked = true; });
+    apply();
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('button.sort'), function (b) {
+    b.addEventListener('click', function () {
+      var k = b.getAttribute('data-sort');
+      sortDir = sortKey === k && sortDir === 'asc' ? 'desc' : 'asc';
+      sortKey = k;
+      Array.prototype.forEach.call(document.querySelectorAll('button.sort'), function (o) { o.removeAttribute('data-dir'); });
+      b.setAttribute('data-dir', sortDir);
+      apply();
+    });
+  });
+  document.querySelector('button.sort[data-sort="date"]').setAttribute('data-dir', 'asc');
+  document.getElementById('filters').hidden = false;
+  apply();
+})();
+</script>
+</body>
+</html>

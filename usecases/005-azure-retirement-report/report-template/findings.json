@@ -1,0 +1,198 @@
+{
+  "_comment": "ユースケース005 Azure リタイア情報レポートの中核成果物（単一のデータ源）。オーケストレーター(azure-retirement-analyst)が手順4で作成し、手順6で統合・判定を確定する。ワーカー(azure-retirement-summarizer)は .work/batch-<NN>.json を書くだけで本ファイルを書かない。report-writer は本ファイルを読み取り専用で描画する。このテンプレは参照元（スキーマ例）。実値に置換し、配列は実データ件数だけ複製する。BOM 不要。reports/<YYYYMMDD-HHmmss>/findings.json はローカル限定（.gitignore 済み）。",
+  "metadata": {
+    "generatedAt": "{{META_DATETIME}}",
+    "asOfDate": "{{AS_OF_DATE}}",
+    "timezone": "JST (UTC+9)",
+    "scope": {
+      "type": "default|futureOnly|next12Months|all|custom",
+      "label": "{{SCOPE_LABEL}}",
+      "windowStart": "YYYY-MM-DD または null（下限なし）",
+      "windowEnd": "YYYY-MM-DD または null（上限なし）",
+      "prefilterStartYear": 0,
+      "prefilterMarginMonths": 6
+    },
+    "sources": {
+      "primary": "Microsoft Release Communications MCP (get_recent_azure_updates / get_azure_update_by_id)",
+      "fallback": "Release Communications 公開 API https://www.microsoft.com/releasecommunications/api/v2/azure（Azure Updates https://azure.microsoft.com/ja-jp/updates/ と同一データ源）",
+      "remediationSupplement": "Microsoft Learn MCP（本文に公式リンクが無い場合のみ）"
+    },
+    "collectionMethod": "{{COLLECTION_METHOD}}",
+    "capabilities": {
+      "mrcMcp": "利用可|不可",
+      "releaseCommunicationsApi": "利用可|不可|未使用",
+      "learnMcp": "利用可|不可|未使用|未判定"
+    },
+    "reportFolder": "usecases/005-azure-retirement-report/reports/<YYYYMMDD-HHmmss>/"
+  },
+  "ledger": {
+    "_comment": "収集の完全性台帳。各段階の ID 件数を記録し、欠落・重複・取りこぼしを検出する。",
+    "retirementsTotal": { "firstObserved": 0, "lastObserved": 0, "query": "tags/any(t:t eq 'Retirements')" },
+    "enumeration": {
+      "inScopeQuery": "tags/any(t:t eq 'Retirements') and availabilities/any(a:a/year ge <Y>)",
+      "inScopeCount": 0,
+      "complementQuery": "tags/any(t:t eq 'Retirements') and not availabilities/any(a:a/year ge <Y>)",
+      "complementCount": 0,
+      "consistent": true,
+      "enumeratedAt": "{{META_DATETIME}}",
+      "pages": 0,
+      "enumeratedIdCount": 0,
+      "uniqueNoticeIdCount": 0,
+      "duplicatePageIds": []
+    },
+    "candidateNoticeIds": [],
+    "prefilteredOut": [ { "id": "000000", "reason": "availabilityMonthBeforePrefilter" } ],
+    "detailFetchedNoticeIds": [],
+    "workerReturnedNoticeIds": [],
+    "failedNoticeIds": [ { "id": "000000", "reason": "fetchFailed|malformedShard|retriesExhausted", "attempts": 3 } ],
+    "outOfScopeAfterExtraction": [ { "id": "000000", "eventKey": "000000", "reason": "retireDateOutsideWindow" } ],
+    "eventCount": 0,
+    "mergedEvents": [ { "eventId": "000000", "mergedNoticeIds": ["000000", "000001"], "evidence": "" } ]
+  },
+  "summary": {
+    "noticeCount": 0,
+    "eventCount": 0,
+    "highCount": 0,
+    "mediumCount": 0,
+    "lowCount": 0,
+    "needsReviewCount": 0,
+    "within90DaysCount": 0,
+    "currentMonthCount": 0,
+    "retiredCount": 0,
+    "dateConflictCount": 0,
+    "inferredClassificationCount": 0,
+    "statusHighlight": ""
+  },
+  "impactRule": {
+    "_comment": "影響度の決定論ルール（オーケストレーターが適用。テンプレの値を変更しない）。",
+    "severity": {
+      "S3": "flags.workloadStop=true または flags.dataLossRisk=true",
+      "S1": "flags.autoMigration=true かつ workloadStop・dataLossRisk のいずれも true でない",
+      "S2": "上記以外（unknown を含む・保守的）"
+    },
+    "urgency": {
+      "U3": "status=retired または status=currentMonth または daysRemaining<=90",
+      "U2": "daysRemaining<=365",
+      "U1": "daysRemaining>365"
+    },
+    "matrix": {
+      "S3": { "U3": "High", "U2": "High", "U1": "Medium" },
+      "S2": { "U3": "High", "U2": "Medium", "U1": "Low" },
+      "S1": { "U3": "Medium", "U2": "Low", "U1": "Low" }
+    },
+    "needsReview": "retireDate.precision=unknown または classificationStatus=insufficientEvidence の場合は impact=NeedsReview（要確認）"
+  },
+  "notices": [
+    {
+      "id": "000000",
+      "title": "Retirement: <英語原文タイトル>",
+      "titleJa": "<日本語訳タイトル>",
+      "updateUrl": "https://azure.microsoft.com/ja-jp/updates/?id=000000",
+      "products": ["<PRODUCT>"],
+      "productSource": "api|inferred",
+      "categories": ["Compute"],
+      "categorySource": "api|inferred|uncategorized",
+      "availabilityMonth": "YYYY-MM または null",
+      "created": "YYYY-MM-DDTHH:mm:ssZ",
+      "modified": "YYYY-MM-DDTHH:mm:ssZ",
+      "fetchStatus": "ok|failed",
+      "fetchedVia": "MRC MCP|ReleaseCommunicationsApi",
+      "batchId": "B01",
+      "eventIds": ["000000"]
+    }
+  ],
+  "events": [
+    {
+      "eventId": "000000",
+      "primaryNoticeId": "000000",
+      "noticeIds": ["000000"],
+      "relatedNoticeIds": [],
+      "title": "Retirement: <英語原文タイトル>",
+      "titleJa": "<日本語訳タイトル>",
+      "updateUrl": "https://azure.microsoft.com/ja-jp/updates/?id=000000",
+      "categories": ["Compute"],
+      "categorySource": "api|inferred|uncategorized",
+      "products": ["<PRODUCT>"],
+      "productSource": "api|inferred",
+      "affectedScopeJa": "<対象 SKU・機能・API 版など>",
+      "retireDate": {
+        "precision": "day|month|unknown",
+        "start": "YYYY-MM-DD または null",
+        "end": "YYYY-MM-DD または null",
+        "source": "description|availability|none",
+        "evidence": "<本文の該当文（英語原文・200 文字以内のプレーンテキスト）>"
+      },
+      "status": "retired|currentMonth|upcoming|unknown",
+      "daysRemaining": 0,
+      "dateConflict": false,
+      "dateNoteJa": "",
+      "milestones": [
+        { "date": "YYYY-MM-DD", "precision": "day|month", "labelJa": "新規作成の停止", "evidence": "<原文抜粋>" }
+      ],
+      "impactType": "ServiceRetirement|SkuRetirement|VersionRetirement|FeatureRetirement|Unknown",
+      "flags": { "workloadStop": "true|false|unknown", "dataLossRisk": "true|false|unknown", "autoMigration": "true|false|unknown" },
+      "flagEvidence": { "workloadStop": "", "dataLossRisk": "", "autoMigration": "" },
+      "classificationStatus": "confirmed|ambiguous|insufficientEvidence",
+      "severityScore": 2,
+      "urgencyScore": 2,
+      "impact": "High|Medium|Low|NeedsReview",
+      "impactReasonJa": "S2（停止・消失の明記なし）× U2（残 200 日）→ Medium",
+      "summaryJa": "<何がいつリタイアし、何が起きるかの日本語要約>",
+      "remediationJa": ["<対応手順 1>", "<対応手順 2>"],
+      "remediationStatus": "explicit|supplementedByLearn|notFound",
+      "migrationTarget": "<移行先サービス / SKU / 版。無ければ空>",
+      "referenceLinks": [
+        { "titleJa": "<リンク名>", "url": "https://learn.microsoft.com/...", "source": "Description|LearnSearch", "learnQuery": "" }
+      ]
+    }
+  ],
+  "byCategory": [
+    { "category": "Compute", "total": 0, "high": 0, "medium": 0, "low": 0, "needsReview": 0 }
+  ],
+  "byQuarter": [
+    { "quarter": "YYYY-Qn または 日付不明", "total": 0, "high": 0, "medium": 0, "low": 0, "needsReview": 0 }
+  ],
+  "batches": [
+    { "batchId": "B01", "noticeIds": ["000000"], "dupGroupIds": [], "shardPath": ".work/batch-01.json", "status": "pending|done|failed|downgraded", "attempts": 0 }
+  ],
+  "dupCandidateGroups": [
+    { "groupId": "G01", "noticeIds": ["000000", "000001"], "rule": "normalizedTitle|sameTarget" }
+  ],
+  "collectionPlan": [
+    {
+      "task": "Enumerate:retirementNotices",
+      "requiredBy": "常時",
+      "dueStep": 4,
+      "status": "pending",
+      "evidence": { "query": "tags/any(t:t eq 'Retirements') ＋ 年フィルタと補集合", "expectedCount": null, "resultCount": null, "collectedAt": "", "note": "inScopeCount + complementCount = retirementsTotal" }
+    },
+    {
+      "task": "Detail:fetchAndExtract",
+      "requiredBy": "常時",
+      "dueStep": 5,
+      "status": "pending",
+      "evidence": { "query": "get_azure_update_by_id（ワーカー並列）", "expectedCount": null, "resultCount": null, "collectedAt": "", "note": "candidateNoticeIds = workerReturnedNoticeIds ∪ failedNoticeIds" }
+    },
+    {
+      "task": "Remediation:learnSupplement",
+      "requiredBy": "learnMcp=利用可",
+      "dueStep": 5,
+      "status": "pending",
+      "evidence": { "query": "microsoft_docs_search（本文に公式リンクが無い event のみ）", "expectedCount": null, "resultCount": null, "collectedAt": "", "note": "" }
+    },
+    {
+      "task": "Normalize:eventsAndDedup",
+      "requiredBy": "常時",
+      "dueStep": 6,
+      "status": "pending",
+      "evidence": { "query": "shard 統合・sameEventAs 統合・範囲の最終判定", "expectedCount": null, "resultCount": null, "collectedAt": "", "note": "" }
+    },
+    {
+      "task": "Score:impactAndSummary",
+      "requiredBy": "常時",
+      "dueStep": 6,
+      "status": "pending",
+      "evidence": { "query": "impactRule の決定論適用・summary/byCategory/byQuarter 集計", "expectedCount": null, "resultCount": null, "collectedAt": "", "note": "" }
+    }
+  ]
+}
