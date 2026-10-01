@@ -123,9 +123,8 @@ $island = [regex]::Match($h,'<script type="application/json" id="retirement-data
 & $r '3a island has no raw <' (-not $island.Contains('<'))
 $ev = @($island | ConvertFrom-Json)
 & $r '3b island eventIds = findings.events' ((@($ev.eventId) -join ',') -eq $ids) "island=$($ev.Count) findings=$(@($f.events).Count)"
-# 4) logic script and CSP meta identical to the template (comments stripped, newlines normalized)
-$strip = { param($s) [regex]::Replace($s,'<!--[\s\S]*?-->','') }
-$js = { param($s) [regex]::Match((& $strip $s),'<script>([\s\S]*?)</script>').Groups[1].Value }
+# 4) logic script (the only attribute-less <script>; compared as-is incl. comments, since the CSP hash covers them) and CSP meta identical to the template (newlines normalized)
+$js = { param($s) $m = [regex]::Matches($s,'<script>([\s\S]*?)</script>'); if ($m.Count -eq 1) { $m[0].Groups[1].Value } else { "<$($m.Count) attribute-less scripts>" } }
 $csp = { param($s) [regex]::Match($s,'<meta http-equiv="Content-Security-Policy"[^>]*>').Value }
 & $r '4a logic script unchanged' ((& $js $h) -ceq (& $js $tp))
 & $r '4b CSP meta unchanged' ((& $csp $h) -ceq (& $csp $tp))
@@ -179,8 +178,13 @@ $catAct = @(& $rowsOf 'by-category' 'by-quarter'); $catExp = @(& $expRows $f.byC
 & $r '6b category rows = findings.byCategory' (($catAct -join "`n") -ceq ($catExp -join "`n")) "html=$($catAct.Count) findings=$(@($f.byCategory).Count)"
 $qAct = @(& $rowsOf 'by-quarter' 'impact-rule'); $qExp = @(& $expRows $f.byQuarter 'quarter')
 & $r '6c quarter rows = findings.byQuarter' (($qAct -join "`n") -ceq ($qExp -join "`n")) "html=$($qAct.Count) findings=$(@($f.byQuarter).Count)"
-# 7) safety: no e-mail address, SafeLinks or <PLACEHOLDER> left
-$bad = @(Select-String -CaseSensitive -Path "$d/index.html","$d/retirements.csv" -Pattern '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|safelinks\.protection\.outlook\.com|<[A-Z_]{3,}>')
+# 7) safety: no e-mail address / SafeLinks in index.html, retirements.csv or findings.json (whole file, also after percent-decoding and JSON unescaping), no <PLACEHOLDER> in index.html / retirements.csv
+$unesc = { param($s) do { $p = $s; $s = [Uri]::UnescapeDataString($s) } while ($s -cne $p); $s }
+$texts = [ordered]@{ 'index.html' = $h; 'retirements.csv' = (Get-Content -Raw -Encoding utf8 "$d/retirements.csv")
+  'findings.json' = (Get-Content -Raw -Encoding utf8 "$d/findings.json") + "`n" + ($f | ConvertTo-Json -Depth 100) }
+$bad = @(foreach ($k in $texts.Keys) { $s = $texts[$k]
+  if (($s + "`n" + (& $unesc $s)) -match '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|safelinks\.protection\.outlook\.com') { "${k}: $($Matches[0])" }
+  if ($k -ne 'findings.json' -and $s -cmatch '<[A-Z_]{3,}>') { "${k}: $($Matches[0])" } })
 & $r '7a no email/safelinks/placeholder' ($bad.Count -eq 0) (($bad | Select-Object -First 3) -join ' / ')
 # 7b) every updateUrl / referenceLinks[].url in findings.events and the data island passes the link allowlist (the CSV is covered by 5d)
 $okUrl = { param($u) $x = $null
