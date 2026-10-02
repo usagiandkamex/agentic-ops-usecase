@@ -23,14 +23,15 @@ IT 運用（Ops）の実務課題を、GitHub Copilot を中心としたエー�
 │   ├── prompts/                    プロンプト (<NNN>-*.prompt.md)
 │   └── instructions/               インストラクション (<NNN>-*.instructions.md)
 ├── .vscode/
-│   └── mcp.json                    MCP サーバの定義 (Azure MCP / MRC・共有用・オプトイン)
+│   └── mcp.json                    MCP サーバの定義 (Azure MCP / MRC / Microsoft Learn・共有用・オプトイン)
 ├── docs/
 │   └── usecase-template.md         ユースケースの雛形
 └── usecases/
     ├── 001-azure-resource-analysis/       ユースケースの説明・索引(README)
     ├── 002-config-inventory-vulnerability/ ユースケースの説明・索引(README)
     ├── 003-network-access-evaluation/      ユースケースの説明・索引(README)
-    └── 004-availability-report/            ユースケースの説明・索引(README)
+    ├── 004-availability-report/            ユースケースの説明・索引(README)
+    └── 005-azure-retirement-report/        ユースケースの説明・索引(README)
 ```
 
 > エージェントの実体は VS Code の自動検出仕様に合わせ `.github/` 配下に置き、`<NNN>-` プレフィックスでユースケースを紐付けます。`usecases/<NNN>-<name>/README.md` は人が読むドキュメント（索引）です。
@@ -43,6 +44,7 @@ IT 運用（Ops）の実務課題を、GitHub Copilot を中心としたエー�
 | 002 構成管理棚卸・脆弱性検知 | 利用者責任リソースの OS/ランタイム/エンジン版数を読み取り専用で棚卸し、公開脆弱性情報（Defender の CVE・EOL）と照合して是正要否・パッチ適用可否を判定する | [usecases/002-config-inventory-vulnerability](usecases/002-config-inventory-vulnerability/README.md) |
 | 003 ネットワークアクセス可否評価 | 対象リソース × パブリック IP/URL × 方向（インバウンド/アウトバウンド）の通信可否を、経路上の全制御レイヤ（NSG / App Service アクセス制限 / Azure Firewall+UDR / 境界 / PaaS FW）で読み取り専用に横断判定し、期待状態への変更提案（az/Bicep）を提示する | [usecases/003-network-access-evaluation](usecases/003-network-access-evaluation/README.md) |
 | 004 Azure 定期稼働報告 | IPA「非機能要求グレード2018」の可用性・運用保守性項目に基づき、指定期間の可用性・SLA 達成状況・稼働率・インシデント・運用点検を読み取り専用で集計し、定期稼働報告を自動生成する | [usecases/004-availability-report](usecases/004-availability-report/README.md) |
+| 005 Azure リタイア情報レポート | Azure リソースにはアクセスせず、公開情報（Microsoft Release Communications MCP / Azure Updates）からリタイア情報のみを収集し、リタイア日・影響度（決定論ルール）・対応策を、カテゴリ / 製品 / 影響度 / 時期でフィルタできる単一 HTML ＋ CSV にまとめる | [usecases/005-azure-retirement-report](usecases/005-azure-retirement-report/README.md) |
 
 > 新しいユースケースを追加したら、この表に1行追記してください。
 

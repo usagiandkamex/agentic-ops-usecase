@@ -17,12 +17,21 @@
       ]
     },
     // Microsoft Release Communications (MRC) MCP Server: used by usecase 002
-    // to query Azure Updates / service retirements (EOL) for managed services.
+    // (service retirements / EOL for managed services) and usecase 005
+    // (Azure retirement report from Azure Updates).
     // Remote streamable HTTP transport, no authentication required.
     // Docs: https://learn.microsoft.com/microsoft-365/admin/manage/mrc-mcp
     "Microsoft Release Communications": {
       "type": "http",
       "url": "https://www.microsoft.com/releasecommunications/mcp"
+    },
+    // Microsoft Learn MCP Server: used by usecase 005 (optional) to supplement
+    // official migration guidance when a retirement notice has no official link.
+    // Remote streamable HTTP transport, no authentication required.
+    // Docs: https://learn.microsoft.com/training/support/mcp
+    "Microsoft Learn": {
+      "type": "http",
+      "url": "https://learn.microsoft.com/api/mcp"
     }
   }
 }

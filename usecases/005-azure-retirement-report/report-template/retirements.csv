@@ -1,0 +1,2 @@
+eventId,primaryNoticeId,noticeIds,relatedNoticeIds,retireDateStart,retireDateEnd,datePrecision,status,daysRemaining,impact,severityScore,urgencyScore,impactType,workloadStop,dataLossRisk,autoMigration,classificationStatus,categories,categorySource,products,productSource,title,titleJa,affectedScopeJa,summaryJa,remediationJa,remediationStatus,migrationTarget,milestones,dateConflict,dateNoteJa,updateUrl,referenceUrls
+{{RETIREMENT_ROWS}}
