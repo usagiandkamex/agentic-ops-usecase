@@ -10,7 +10,7 @@
   トークン（メタ）: META_DATETIME(JST) / AS_OF_DATE / SCOPE_LABEL / COLLECTION_METHOD / CAP_MRC_MCP / CAP_RC_API / CAP_LEARN_MCP
   トークン（サマリ）: NOTICE_COUNT / EVENT_COUNT / HIGH_COUNT / MEDIUM_COUNT / LOW_COUNT / NEEDS_REVIEW_COUNT / WITHIN_90_COUNT / RETIRED_COUNT / DATE_CONFLICT_COUNT / STATUS_HIGHLIGHT
   トークン（完全性）: RETIREMENTS_TOTAL / INSCOPE_COUNT / COMPLEMENT_COUNT / ENUM_CONSISTENT / CANDIDATE_COUNT / PREFILTERED_OUT_COUNT / WORKER_RETURNED_COUNT / FAILED_COUNT / OUT_OF_SCOPE_COUNT / MERGED_COUNT
-  データアイランド: EVENTS_JSON = findings.json の events 配列そのもの（要素・キーを省略しない）。JSON 文字列中の山括弧と & は必ず \u003c \u003e \u0026 にエスケープする（閉じ script タグによる脱出防止）。0 件なら []。
+  データアイランド: EVENTS_JSON = findings.json の events 配列そのもの（要素・キーを省略・改名・並べ替えしない）。JSON 文字列中の山括弧と & は必ず \u003c \u003e \u0026 にエスケープする（閉じ script タグによる脱出防止）。0 件なら []。
   区域: CATEGORY_ROWS（行トークン CATEGORY / CAT_TOTAL / CAT_HIGH / CAT_MEDIUM / CAT_LOW / CAT_NEEDS_REVIEW）
         QUARTER_ROWS（行トークン QUARTER / Q_TOTAL / Q_HIGH / Q_MEDIUM / Q_LOW / Q_NEEDS_REVIEW）
   エスケープ: HTML 本文に差し込むテキスト（STATUS_HIGHLIGHT・CATEGORY 等）はアンパサンド・山括弧・二重 / 単一引用符を文字実体参照にエスケープする。外部取得の HTML をそのまま埋め込まない。

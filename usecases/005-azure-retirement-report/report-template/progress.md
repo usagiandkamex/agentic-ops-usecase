@@ -37,7 +37,7 @@
 ## 収集・品質ゲート（切れ目ごと・完了で x）
 - [ ] G1（手順4→5）: inScopeCount + complementCount = retirementsTotal（不一致なら 1 回再列挙、なお不一致なら consistent=false として記録）／ページ重複 ID を一意化し一意件数 = inScopeCount／ledger.prefilter が screenStatus に応じた等式を満たす（done: screenedCount = complementCount・excludedCount = complementCount − 補完件数・候補件数 = inScopeCount + 補完件数／notNeeded: 補集合・除外 0・候補件数 = inScopeCount／unavailable・fallbackAll: 補完 0・除外 0・候補件数 = inScopeCount + complementCount）／全 candidate がいずれかのバッチに 1 回だけ割当（参照投稿を除く）・各バッチの本文取得は 8 件以内
 - [ ] G2（手順5→6）: 全バッチが done または downgraded／candidateNoticeIds = workerReturnedNoticeIds ∪ failedNoticeIds（漏れ・重複 0）／各シャードが有効 JSON で必須キーを満たし、sameEventAs の参照先が同じシャード内に実在するか、渡した参照投稿の events[].eventKey のいずれか
-- [ ] G3（手順6→7）: G3 検証コマンドで per-event 不一致 0・eventId 重複 0・投稿との対応欠落 0・events[].noticeIds と notices[].eventIds の (noticeId, eventId) の組が双方向で完全一致（片側のみ 0・重複 0・投稿の無いイベント 0）・summary 不一致 0・byCategory / byQuarter 一致・collectionPlan に pending / failed 0 件
+- [ ] G3（手順6→7）: G3 検証コマンドで per-event 不一致 0・eventId 重複 0・投稿との対応欠落 0・events[].noticeIds と notices[].eventIds の (noticeId, eventId) の組が双方向で完全一致（片側のみ 0・重複 0・投稿の無いイベント 0）・summary 不一致 0・byCategory / byQuarter が値と並び順（カテゴリは大文字小文字を区別しない昇順で Uncategorized 末尾、四半期は時系列順で日付不明末尾）まで一致・collectionPlan に pending / failed 0 件
 - [ ] G4（手順7・最終）: report-writer の検証ゲート全合格（トークン残存 0・アンカー・データアイランド件数一致・スクリプト / CSP 一致・CSV の BOM / 行数 / 列数 / 全セルが findings.events と一致・全 URL が許可リスト内）
 
 ## バッチ状況（手順5）

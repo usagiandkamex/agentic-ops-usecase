@@ -201,7 +201,7 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
    - `severityScore`: `workloadStop="true"` または `dataLossRisk="true"` → 3、`autoMigration="true"` → 1、それ以外 → 2。
    - `impact` = マトリクス（S3: High/High/Medium、S2: High/Medium/Low、S1: Medium/Low/Low ＝ U3/U2/U1 の順）。`status=unknown` または `classificationStatus=insufficientEvidence` は `NeedsReview`（`severityScore` / `urgencyScore` は `null`）。
    - `impactReasonJa` = `S<n>（<理由>）× U<n>（<残日数 or 状態>）→ <impact>`。
-6. **集計**: `summary`（`noticeCount`＝`notices[]` の件数 / `eventCount` / `high|medium|low|needsReviewCount` / `within90DaysCount`（`currentMonth`＋`upcoming` かつ残 ≤ 90）/ `currentMonthCount` / `retiredCount` / `dateConflictCount` / `inferredClassificationCount`（`productSource` または `categorySource` が `inferred` のイベント数））、`byCategory[]`（カテゴリ昇順・複数カテゴリは各カテゴリで計上・`Uncategorized` は末尾）、`byQuarter[]`（`retireDate.start` の暦四半期 `YYYY-Qn` 昇順・`日付不明` は末尾）。
+6. **集計**: `summary`（`noticeCount`＝`notices[]` の件数 / `eventCount` / `high|medium|low|needsReviewCount` / `within90DaysCount`（`currentMonth`＋`upcoming` かつ残 ≤ 90）/ `currentMonthCount` / `retiredCount` / `dateConflictCount` / `inferredClassificationCount`（`productSource` または `categorySource` が `inferred` のイベント数））、`byCategory[]`（カテゴリ名の昇順＝大文字小文字を区別しない序数比較（`OrdinalIgnoreCase`。例: `Developer tools` → `DevOps`）・複数カテゴリは各カテゴリで計上・`Uncategorized` は末尾）、`byQuarter[]`（`retireDate.start` の暦四半期 `YYYY-Qn` の時系列昇順・`日付不明` は末尾）。G3 はこの**配列の並び順まで**照合する。
 7. **総評 `statusHighlight`**: 事実のみで 2〜4 文（例: High 件数と主な対象、90 日以内の件数、要確認の件数）。本文の文言をそのまま貼らない。
 8. `findings.json` を編集ツールで更新する: `notices[]` を確定値で置き換え、`events[]`（代表フィールド＋計算値・キー名はテンプレートどおり）を書く（いずれも R2 の分割書き込み）。`summary` / `byCategory` / `byQuarter` / `ledger` / `metadata.capabilities.learnMcp` を更新し、`collectionPlan` の `Normalize:eventsAndDedup` / `Score:impactAndSummary` を証跡付き `done` にする。
 - 🔍 **G3（READ 検証・ファイルを書かない）**: 次のコマンドで判定値・`summary`・カテゴリ別 / 四半期別集計・投稿との対応（`events[].noticeIds` と `notices[].eventIds` の双方向）・`collectionPlan` を `events[]` から再計算して照合する。不合格があれば `findings.json` を修正して再実行する。
@@ -242,22 +242,26 @@ $sm = @($exp.GetEnumerator() | Where-Object { $f.summary.($_.Key) -ne $_.Value }
 "3 summary mismatch=$($sm.Count)"; $sm
 $fmt = { param($k, $list) $l = @($list); "{0}={1}/{2}/{3}/{4}/{5}" -f $k, $l.Count, @($l | Where-Object impact -eq 'High').Count, @($l | Where-Object impact -eq 'Medium').Count, @($l | Where-Object impact -eq 'Low').Count, @($l | Where-Object impact -eq 'NeedsReview').Count }
 $catsOf = { param($e) if (@($e.categories).Count) { @($e.categories) } else { @('Uncategorized') } }
-$expCat = @(@($events | ForEach-Object { & $catsOf $_ }) | Sort-Object -Unique | ForEach-Object { $c = $_; & $fmt $c ($events | Where-Object { $c -in (& $catsOf $_) }) }) | Sort-Object
-$actCat = @($f.byCategory | ForEach-Object { "{0}={1}/{2}/{3}/{4}/{5}" -f $_.category, $_.total, $_.high, $_.medium, $_.low, $_.needsReview }) | Sort-Object
-"4 byCategory match=" + (($expCat -join ';') -eq ($actCat -join ';')); if (($expCat -join ';') -ne ($actCat -join ';')) { "  expected: $($expCat -join '; ')"; "  findings: $($actCat -join '; ')" }
+$catKeys = @(@($events | ForEach-Object { & $catsOf $_ }) | Sort-Object -Unique -CaseSensitive)
+$catOrd = [string[]]@($catKeys | Where-Object { $_ -cne 'Uncategorized' }); [Array]::Sort($catOrd, [StringComparer]::OrdinalIgnoreCase)
+$expCat = @(@($catOrd) + @($catKeys | Where-Object { $_ -ceq 'Uncategorized' }) | ForEach-Object { $c = $_; & $fmt $c ($events | Where-Object { $c -cin (& $catsOf $_) }) })
+$actCat = @($f.byCategory | ForEach-Object { "{0}={1}/{2}/{3}/{4}/{5}" -f $_.category, $_.total, $_.high, $_.medium, $_.low, $_.needsReview })
+"4 byCategory match (values and order)=" + (($expCat -join ';') -ceq ($actCat -join ';')); if (($expCat -join ';') -cne ($actCat -join ';')) { "  expected: $($expCat -join '; ')"; "  findings: $($actCat -join '; ')" }
 $qOf = { param($e) if ($e.retireDate.precision -eq 'unknown' -or -not $e.retireDate.start) { '日付不明' } else { $s = & $toDate $e.retireDate.start; '{0}-Q{1}' -f $s.Year, [math]::Ceiling($s.Month / 3) } }
-$expQ = @(@($events | ForEach-Object { & $qOf $_ }) | Sort-Object -Unique | ForEach-Object { $k = $_; & $fmt $k ($events | Where-Object { (& $qOf $_) -eq $k }) }) | Sort-Object
-$actQ = @($f.byQuarter | ForEach-Object { "{0}={1}/{2}/{3}/{4}/{5}" -f $_.quarter, $_.total, $_.high, $_.medium, $_.low, $_.needsReview }) | Sort-Object
-"5 byQuarter match=" + (($expQ -join ';') -eq ($actQ -join ';')); if (($expQ -join ';') -ne ($actQ -join ';')) { "  expected: $($expQ -join '; ')"; "  findings: $($actQ -join '; ')" }
+$qKeys = @(@($events | ForEach-Object { & $qOf $_ }) | Sort-Object -Unique -CaseSensitive)
+$qOrd = [string[]]@($qKeys | Where-Object { $_ -cne '日付不明' }); [Array]::Sort($qOrd, [StringComparer]::Ordinal)
+$expQ = @(@($qOrd) + @($qKeys | Where-Object { $_ -ceq '日付不明' }) | ForEach-Object { $k = $_; & $fmt $k ($events | Where-Object { (& $qOf $_) -ceq $k }) })
+$actQ = @($f.byQuarter | ForEach-Object { "{0}={1}/{2}/{3}/{4}/{5}" -f $_.quarter, $_.total, $_.high, $_.medium, $_.low, $_.needsReview })
+"5 byQuarter match (values and order)=" + (($expQ -join ';') -ceq ($actQ -join ';')); if (($expQ -join ';') -cne ($actQ -join ';')) { "  expected: $($expQ -join '; ')"; "  findings: $($actQ -join '; ')" }
 "6 collectionPlan pending=" + @($f.collectionPlan | Where-Object status -eq 'pending').Count + " failed=" + @($f.collectionPlan | Where-Object status -eq 'failed').Count
 ```
 
-合格条件: 1 の mismatch=0、2 の 3 値がすべて 0、2b の 4 値がすべて 0（`events[].noticeIds` と `notices[].eventIds` の (noticeId, eventId) の組が双方向で完全一致し、投稿を持たないイベントが無い）、3 の mismatch=0、4・5 が `True`、6 が `pending=0 failed=0`。
+合格条件: 1 の mismatch=0、2 の 3 値がすべて 0、2b の 4 値がすべて 0（`events[].noticeIds` と `notices[].eventIds` の (noticeId, eventId) の組が双方向で完全一致し、投稿を持たないイベントが無い）、3 の mismatch=0、4・5 が `True`（件数だけでなく手順 6-6 の並び順も一致）、6 が `pending=0 failed=0`。
 
 ### 手順 7. レポート生成（report-writer 委譲）と G4
 
 - `azure-retirement-report-writer` に `reportFolder`（絶対パス）と `findingsPath` を渡す（`progress.md` は渡さない＝更新させない）。
-- writer は `index.html` / `retirements.csv` を生成し、検証ゲートの結果（各項目の合否）を返す。`dataFailure`（findings の不備）が返った場合は手順 6 を修正して writer を再委譲する（最大 2 回）。許可リスト外の URL が理由なら、該当リンクを README の「リンクの許可リスト」に従って正規化し（`http` は `https` に置き換え、SafeLinks は `url` クエリの実 URL に復号）、許可リストを満たせばその URL に置き換え、満たさなければ `referenceLinks` から除く（SafeLinks の URL 自体は残さない。`updateUrl` は手順 6-3 の形式で作り直す）。そのうえで G3 を再実行してから再委譲する。
+- writer は `index.html` / `retirements.csv` を生成し、検証ゲートの結果（各項目の合否）を返す。`dataFailure`（findings の不備）が返った場合は手順 6 を修正して writer を再委譲する（最大 2 回）。許可リスト外の URL が理由なら、該当リンクを README の「リンクの許可リスト」に従って正規化し（`http` は `https` に置き換え、SafeLinks は `url` クエリの実 URL に復号）、許可リストを満たせばその URL に置き換え、満たさなければ `referenceLinks` から除く（SafeLinks の URL 自体は残さない。`updateUrl` は手順 6-3 の形式で作り直す）。そのうえで G3 を再実行してから再委譲する。機微情報（メールアドレス・SafeLinks）が理由なら、指摘された JSON パスごとに直す: 値の指摘はその値から該当部分を除き（SafeLinks の URL は実 URL に復号して許可リストで再判定し、満たさなければ削除）、`(key)` の指摘（キー名自体が該当）はそのプロパティをテンプレートのキー名に直すか削除する。パス中の `{key#n}` は親オブジェクトの n 番目（1 始まり）のプロパティを指す。直したら同様に G3 を再実行してから再委譲する。
 - 🔍 **G4**: writer の検証結果が全合格であることを確認し、あなた自身も [report-template/README.md](../../usecases/005-azure-retirement-report/report-template/README.md) の検証ゲート 1・3・4・5 を READ コマンドで再実行して合格を確認する。
 
 ### 手順 8. 完了報告
