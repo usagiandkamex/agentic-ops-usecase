@@ -312,7 +312,17 @@ def _batch_ready(st: dict, b: dict) -> bool:
         return False
     if b["waitFor"]:
         dep = next(x for x in st["batches"] if x["batchId"] == b["waitFor"])
-        return dep["status"] in CHECKED
+        if dep["status"] not in CHECKED:
+            return False
+        g = next((x for x in st["groups"] if x["groupId"] == b["refGroupId"]), None)
+        if g is None:
+            return True
+        ns = st["noticeStatus"]
+        assigned = set(b["noticeIds"])
+        if any(m not in assigned and ns[m]["status"] == "ok" for m in g["noticeIds"]):
+            return True
+        # Keep waiting while any owner-batch member can still become a reference via its retry batch.
+        return all(ns[m]["status"] == "exhausted" for m in dep["noticeIds"])
     return True
 
 

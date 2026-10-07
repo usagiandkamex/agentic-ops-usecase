@@ -311,6 +311,44 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(g1["status"], "pass")  # recorded (soft) failure: continues, shown in the report
         self.assertTrue(any("consistent=false" in d for d in g1["details"]))
 
+    def _plan_big_group(self):
+        name, run = self.init()
+        self.tool("enumerate", "--run", name)
+        self.tool("record-same-target", "--run", name, "--none")
+        self.tool("plan-batches", "--run", name)
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        g = next(x for x in st["groups"] if len(x["noticeIds"]) == 10)
+        owner, chunk = [next(b for b in st["batches"] if b["batchId"] == x) for x in g["batchIds"]]
+        return name, run, set(owner["noticeIds"]), chunk["batchId"]
+
+    def _wave_trace(self, name, run, fails):
+        waves = []
+        for _ in range(20):
+            w = self.tool("next-wave", "--run", name)
+            if not w["dispatch"]:
+                break
+            waves.append({d["batchId"]: d["referenceNoticeIds"] for d in w["dispatch"]})
+            self.simulate(run, lambda nid, attempt, inp: None if fails(nid, attempt) else
+                          {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP", "titleJa": "x", "events": [ev(nid, "2027-03-31")]})
+            if self.tool("check-shards", "--run", name).get("G2"):
+                return waves
+        self.fail("did not reach G2")
+
+    def test_chunk_waits_for_owner_retry_after_whole_batch_failure(self):
+        name, run, owner_ids, chunk_id = self._plan_big_group()
+        waves = self._wave_trace(name, run, lambda nid, attempt: nid in owner_ids and attempt == 1)
+        chunk_wave = next(i for i, w in enumerate(waves) if chunk_id in w)
+        retry_wave = next(i for i, w in enumerate(waves) if any(b.endswith("-r2") for b in w))
+        self.assertGreater(chunk_wave, retry_wave)  # not dispatched alongside the owner retry
+        self.assertTrue(waves[chunk_wave][chunk_id])  # a returned group member is used as the reference
+
+    def test_chunk_runs_without_reference_when_owner_exhausted(self):
+        name, run, owner_ids, chunk_id = self._plan_big_group()
+        waves = self._wave_trace(name, run, lambda nid, attempt: nid in owner_ids)
+        chunk_wave = next(i for i, w in enumerate(waves) if chunk_id in w)
+        self.assertEqual(waves[chunk_wave][chunk_id], [])
+        self.assertTrue(any(b.endswith("-r3") for w in waves[:chunk_wave] for b in w))
+
     def test_malformed_shards_are_retried(self):
         name, run = self.init(scope="all")
         self.tool("enumerate", "--run", name)
