@@ -37,7 +37,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 ## 状態と再開
 
 - 実行状態は `<run>/.work/state.json` に一元化し、`progress.md` は**毎回 state から生成**する（手で編集しない）。
-- 書き込みはすべて一時ファイル → 置換（原子的）。同じ実行への同時実行はロックファイル `reports/.<run>.lock`（所有トークン付き・`.gitignore` 済み）で防ぐ。
+- 書き込みはすべて一時ファイル → 置換（原子的）。同じ実行への同時実行はロックファイル `reports/.<run>.lock`（`.gitignore` 済み）への OS ファイルロック（POSIX は `flock`、Windows は `msvcrt.locking`）で防ぐ。ロックは保持プロセスの終了時に OS が解放するため、長時間の実行を経過時間だけで古いロックとみなして奪うことはなく、異常終了後に残ったファイルも次の実行を妨げない。
 - フェーズ: `initialized` → `enumerated` → `planned` → `collected` → `merged` → `highlighted` → `rendered` → `reviewed` → `finalized`。各サブコマンドは許可されたフェーズでのみ動き、それ以外は `status` に従うよう案内する。
 - ワーカー起動中に中断した場合は `check-shards` を実行する（書かれなかったシャードは失敗扱いになり、再委譲が計画される）。
 

@@ -8,7 +8,6 @@ import html
 import json
 import os
 import re
-import time
 import urllib.parse
 from pathlib import Path
 from typing import Any, Iterable
@@ -28,7 +27,6 @@ NOTICE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 MAX_BATCH = 8
 MAX_WAVE = 6
 MAX_ATTEMPTS = 3
-LOCK_STALE_SECONDS = 30 * 60
 
 
 class ToolError(Exception):
@@ -310,44 +308,66 @@ def write_json(run: Path, rel: str | Path, obj: Any) -> Path:
 
 
 class RunLock:
-    """Exclusive lock per run. Lives next to the run folder (reports/.<run>.lock) so it survives .work removal."""
+    """Exclusive lock per run, held through an OS file lock (flock / msvcrt) on reports/.<run>.lock.
+
+    The kernel releases the lock when the holding process exits, so a crashed run never blocks later
+    commands and a long-running live command is never treated as stale. The file itself is left in place
+    (removing it would let two processes lock different inodes) and lives outside the run folder so it
+    survives .work removal.
+    """
 
     def __init__(self, run: Path):
         self.path = Path(run).parent / f".{Path(run).name}.lock"
-        self.token = f"{os.getpid()}-{time.time_ns()}"
+        self.fd: int | None = None
         self.held = False
 
     def __enter__(self) -> "RunLock":
-        for _ in range(2):
-            try:
-                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                with os.fdopen(fd, "w") as f:
-                    f.write(self.token)
-                self.held = True
-                return self
-            except FileExistsError:
-                try:
-                    stale = time.time() - self.path.stat().st_mtime > LOCK_STALE_SECONDS
-                except FileNotFoundError:
-                    continue
-                if stale:
-                    self.path.unlink(missing_ok=True)
-                    continue
-                raise ToolError(f"another retirement_tool command is running for this run ({self.path.name})")
-        raise ToolError("could not acquire the run lock")
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            _os_lock(fd)
+        except OSError:
+            os.close(fd)
+            raise ToolError(f"another retirement_tool command is running for this run ({self.path.name})")
+        self.fd = fd
+        self.held = True
+        return self
 
     def release(self) -> None:
         if not self.held:
             return
         self.held = False
+        fd, self.fd = self.fd, None
+        if fd is None:
+            return
         try:
-            if self.path.read_text() == self.token:
-                self.path.unlink()
-        except FileNotFoundError:
+            _os_unlock(fd)
+        except OSError:
             pass
+        finally:
+            os.close(fd)
 
     def __exit__(self, *exc: Any) -> None:
         self.release()
+
+
+if os.name == "nt":
+    import msvcrt
+
+    def _os_lock(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+
+    def _os_unlock(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _os_lock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _os_unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 # ---------------------------------------------------------------- state

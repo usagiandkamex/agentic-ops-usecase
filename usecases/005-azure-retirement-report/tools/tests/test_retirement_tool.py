@@ -9,6 +9,7 @@ import contextlib
 import datetime as dt
 import io
 import json
+import os
 import re
 import shutil
 import sys
@@ -485,10 +486,18 @@ class ReviewRegressions(unittest.TestCase):
             with self.assertRaises(common.ToolError):
                 common.RunLock(run).__enter__()
             other = common.RunLock(run)
-            other.held = True  # simulate a process that wrongly believes it holds the lock
+            other.held = True  # simulate an instance that wrongly believes it holds the lock
             other.release()
-            self.assertTrue(first.path.exists())  # a foreign token must not delete our lock
-        self.assertFalse(first.path.exists())
+            with self.assertRaises(common.ToolError):  # a non-owner release must not free our lock
+                common.RunLock(run).__enter__()
+            old = 0  # an old mtime must never make a live lock look stale
+            os.utime(first.path, (old, old))
+            with self.assertRaises(common.ToolError):
+                common.RunLock(run).__enter__()
+        # a leftover lock file without a live holder (e.g. after a crash) does not block the next command
+        self.assertTrue(first.path.exists())
+        with common.RunLock(run) as again:
+            self.assertTrue(again.held)
 
 
 if __name__ == "__main__":
