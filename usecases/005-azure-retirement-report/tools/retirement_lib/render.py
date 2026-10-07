@@ -170,7 +170,7 @@ def verify_report(run: Path) -> dict[str, str]:
     # Data regions (island, CSV records) may legitimately contain token-like text; they are checked cell-exactly by 3c / 5d.
     h_static = ISLAND_RE.sub("", h)
     csv_head = csv_text.split("\n", 1)[0]
-    gate("1 no token residue", not marker.search(h_static) and not marker.search(csv_head) and "{{RETIREMENT_ROWS}}" not in csv_text)
+    gate("1 no token residue", not marker.search(h_static) and not marker.search(csv_head))
     miss = [s for s in SECTIONS if f"<!-- SECTION: {s} -->" not in h]
     gate("2 section anchors", not miss, ",".join(miss))
     im = ISLAND_RE.search(h)

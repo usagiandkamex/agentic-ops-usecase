@@ -43,6 +43,11 @@ def _retire_date(rd: Any, warnings: list[str], key: str) -> dict:
     prec = _enum(rd.get("precision"), PRECISIONS, "retireDate.precision")
     src = rd.get("source") if rd.get("source") in DATE_SOURCES else "none"
     start, end = rd.get("start"), rd.get("end")
+    evidence = clean_text(rd.get("evidence"), 300)
+    # A known date drives scope, remaining days and urgency, so it must carry provenance from the notice.
+    if prec != "unknown" and (src == "none" or not evidence):
+        warnings.append(f"{key}: retireDate の出典（source）または根拠（evidence）が無いため unknown にした")
+        prec, src = "unknown", "none"
     if prec == "unknown":
         s = e = None
     else:
@@ -58,7 +63,7 @@ def _retire_date(rd: Any, warnings: list[str], key: str) -> dict:
             s = e = d.isoformat()
             if end not in (None, s):
                 warnings.append(f"{key}: day 精度の end を start に揃えた")
-    return {"precision": prec, "start": s, "end": e, "source": src, "evidence": clean_text(rd.get("evidence"), 300)}
+    return {"precision": prec, "start": s, "end": e, "source": src, "evidence": evidence}
 
 
 def _milestones(v: Any) -> list[dict]:

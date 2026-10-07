@@ -194,7 +194,7 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(chunk["waitFor"], owner["batchId"])
         self.assertTrue(all(len(b["noticeIds"]) + (1 if b["refGroupId"] else 0) <= 8 for b in st["batches"]))
 
-        evil = '</script><script>alert(1)</script>{{EVENT_COUNT}} <!-- END CATEGORY_ROWS -->'
+        evil = '</script><script>alert(1)</script>{{EVENT_COUNT}} {{RETIREMENT_ROWS}} <!-- END CATEGORY_ROWS -->'
 
         def spec(nid, attempt, inp):
             if nid == "203":
@@ -507,6 +507,23 @@ class ReviewRegressions(unittest.TestCase):
         warn = []
         out = shards.validate_event(e, "a", warn)
         self.assertEqual(out["flags"], {"workloadStop": "true", "dataLossRisk": "false", "autoMigration": "unknown"})
+        self.assertFalse(warn)
+
+    def test_known_date_without_provenance_becomes_unknown(self):
+        for rd in ({"source": "none", "evidence": "Retiring."}, {"evidence": "Retiring."},
+                   {"source": "description", "evidence": "  "}, {"source": "availability"}):
+            e = ev("a", "2027-01-01")
+            e["retireDate"] = {"precision": "day", "start": "2027-01-01", "end": "2027-01-01", **rd}
+            warn: list[str] = []
+            out = shards.validate_event(e, "a", warn)
+            self.assertEqual((out["retireDate"]["precision"], out["retireDate"]["start"], out["retireDate"]["source"]),
+                             ("unknown", None, "none"))
+            self.assertEqual(len([w for w in warn if "retireDate" in w]), 1)
+        e = ev("a", "2027-01", prec="month")
+        e["retireDate"]["source"] = "availability"
+        warn = []
+        out = shards.validate_event(e, "a", warn)
+        self.assertEqual((out["retireDate"]["precision"], out["retireDate"]["end"]), ("month", "2027-01-31"))
         self.assertFalse(warn)
 
     def test_split_event_id_does_not_collide(self):
