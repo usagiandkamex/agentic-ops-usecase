@@ -15,7 +15,7 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
 
 - **情報源**:
   - **列挙・件数照合**: Release Communications 公開 API `https://www.microsoft.com/releasecommunications/api/v2/azure`（Azure Updates のバックエンド。件数・フィルタ・ページングが使えるため、列挙はこちらを正とする）。
-  - **本文の取得**: MRC MCP `get_azure_update_by_id`（ワーカーが使用。不可なら公開 API の `/<id>`）。
+  - **本文の取得**: MRC MCP `get_azure_update_by_id`（ワーカーが使用）。**MRC MCP が使えない実行**（`init --mrc-mcp unavailable`）では、同梱ツールの `next-wave` が公開 API の `/<id>` から本文を取得・テキスト化して**ワーカーの入力ファイル**（`notices[].body`）に入れ、ワーカーは本文の取得にネットワークを使わない。
   - **対応策の補完**: Microsoft Learn MCP（ワーカーのみ・本文に公式リンクが無い場合だけ）。
 - **同梱ツール** [`retirement_tool.py`](../../usecases/005-azure-retirement-report/tools/retirement_tool.py)（Python 3 標準ライブラリのみ・レビュー済み）: 列挙・完全性照合・重複候補のグループ化・バッチ化・シャード検証・再委譲計画・統合・影響度判定・集計・HTML / CSV 描画・検証ゲート・`progress.md` 更新を**決定論的に**行う。使い方は [tools/README.md](../../usecases/005-azure-retirement-report/tools/README.md)。
 - **役割分担**:
@@ -43,7 +43,7 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
 
 ### R1. 公開情報の READ のみ（Azure へはアクセスしない）
 
-- 許可: MRC MCP の参照系ツール、同梱ツール（公開 API への HTTPS GET のみを行う）。
+- 許可: MRC MCP の参照系ツール、同梱ツール（公開 API への HTTPS GET のみを行う。一覧・件数と、MRC MCP が使えない実行での本文）。
 - 禁止: Azure MCP・Azure CLI・Azure Resource Graph 等による **Azure リソース・サブスクリプションへのアクセス**（照会も含めて行わない）、外部への POST / 書き込み、MCP の書き込み系ツール。
 - 認証・サブスクリプション指定・`az login` は不要（求めない）。
 
@@ -96,6 +96,7 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
 - **MRC MCP**: `get_recent_azure_updates` を Retirements タグの絞り込みで 1 件だけ取得して可否を判定する（引数はツール定義に従う）。
 - **公開 API と規模**: `<TOOL> probe --scope <type> [--start --end]` を実行し、`releaseCommunicationsApi`・`retirementsTotal`・`inScopeCount` を得る。`advice` があれば承認メッセージに含める（300 件超は範囲を狭める選択肢も提示）。
 - 公開 API が `不可` ならハードブロッカー（列挙ができない）。ネットワーク設定の確認を依頼して停止する。
+- MRC MCP が `不可` でも続行できる（ハードブロッカーではない）。手順 3 で `--mrc-mcp unavailable` を指定すると、本文は手順 5 の `next-wave` が公開 API から取得してワーカーに渡す。
 - **最終確認（選択肢・承認前にファイルを書かない）**:
 
 ```text
@@ -110,7 +111,7 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
 
 ### 手順 3. 保存先と進捗（承認直後）
 
-- `<TOOL> init --scope <type> [--start --end] --mrc-mcp available|unavailable` を実行する。保存先（JST 秒精度・既存なら `-2` 等）、`.work/state.json`、`progress.md` をツールが作る。出力の `run`（フォルダ名）を以降の `--run` に使う。
+- `<TOOL> init --scope <type> [--start --end] --mrc-mcp available|unavailable` を実行する（`--mrc-mcp` は手順 2 の判定結果）。保存先（JST 秒精度・既存なら `-2` 等）、`.work/state.json`、`progress.md` をツールが作る。出力の `run`（フォルダ名）を以降の `--run` に使う。
 
 ### 手順 4. 列挙・完全性照合・同一対象の判定・バッチ化（G1）
 
@@ -118,14 +119,15 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
 2. **同一対象の判定（あなたの判断）**: `same-target-request.json` を `read` で読み、`byProduct` の各製品について、**タイトルが同じ対象（同じ SKU / シリーズ / 機能 / API・ランタイム版）を指す投稿の組**を選ぶ（例: `NVv3-series … will be retired on …` と `NVv3-series Azure Virtual Machines`）。同じ製品・同じ月でも対象が異なる組は選ばない。正規化タイトルが一致する組（`normalizedTitleGroups`）はツールが自動でグループ化するため選ばなくてよい。
    - 記録: `<TOOL> record-same-target --run <run> --pairs "<id>,<id>;<id>,<id>"`（組が無ければ `--none`）。候補外の ID・自己参照・製品が共通しない組はツールが拒否する。記録しなかった組は「同一対象ではない」として扱われる。
    - ここで選んだ組は**バッチ割当のヒント**にすぎず、統合はしない（統合はワーカーが本文の明記で判断する）。
-3. `<TOOL> plan-batches --run <run>`: 重複候補グループ（連結成分・アンカー＝最新の投稿）、**1 バッチ最大 8 件**のバッチ化（8 件超のグループはアンカー参照付きチャンク）、`findings.json` の骨組み、ワーカー入力ファイルを作り、**G1** を自動検証する。`record-same-target` を実行していないと拒否される（手順の飛ばし防止）。
+3. `<TOOL> plan-batches --run <run>`: 重複候補グループ（連結成分・アンカー＝最新の投稿）、**1 バッチ最大 8 件**のバッチ化（8 件超のグループはアンカー参照付きチャンク）、`findings.json` の骨組みを作り、**G1** を自動検証する（ワーカーの入力ファイルはここでは作らず、手順 5 の `next-wave` が起動直前に作る）。`record-same-target` を実行していないと拒否される（手順の飛ばし防止）。
 
 ### 手順 5. 詳細取得・要約（ワーカー並列 fan-out・G2）
 
 次を `check-shards` が `G2` を返すまで繰り返す。
 
 1. `<TOOL> next-wave --run <run>`: 起動すべきバッチ（最大 6 件・参照付きバッチは参照先の確認後）について、入力ファイル `.work/inputs/<batchId>.json` を作り、`dispatch[]` を返す。
-2. `dispatch[]` の各要素について `azure-retirement-summarizer` を **同じ tool-call batch で並列に起動**する（呼び出し構文を自作せず、VS Code の agent tool の並列 subagent 実行を使う）。プロンプトは `dispatch[].workerPrompt` をそのまま使う（入力ファイルとシャードの絶対パスを含む）。
+   - MRC MCP が `不可` の実行では、各投稿の本文を公開 API から取得・テキスト化して入力ファイルの `notices[].body` に入れる（取得できなかった投稿は `body.fetchError` 付きで渡し、ワーカーが失敗として返す＝通常の再委譲の対象）。公開 API 自体に接続できない場合は終了コード `3` で終わり、状態は変わらない（試行回数も消費しない）。ネットワークを確認して `next-wave` を再実行する。
+2. `dispatch[]` の各要素について `azure-retirement-summarizer` を **同じ tool-call batch で並列に起動**する（呼び出し構文を自作せず、VS Code の agent tool の並列 subagent 実行を使う）。プロンプトは `dispatch[].workerPrompt` をそのまま使う（入力ファイルとシャードの絶対パスを含む。MRC MCP が `不可` の実行では「入力ファイルの本文だけを使う」指示を含む）。
 3. 全ワーカーの返却を待ち、`<TOOL> check-shards --run <run>` を実行する。ツールが各シャードを厳格に検証・正規化し（許可外リンクの除去・メールアドレス / SafeLinks の伏字化・`sameEventAs` の参照先確認を含む）、失敗した投稿**だけ**を再委譲バッチ（`B<NN>-r<n>`・投稿ごとに最大 3 回）として計画する。3 回失敗した投稿は取得失敗として記録され、処理は続行する。
 4. 出力の `next` が `next-wave` なら 1 に戻る。`G2` が返れば手順 6 へ。
 
@@ -138,12 +140,13 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
 ### 手順 7. レポート生成（report-writer 委譲）・G4・独立レビュー
 
 - `azure-retirement-report-writer` に `run`（フォルダ名）と `reportFolder`（絶対パス）を渡す。writer は `render`（描画＋ G4）を実行し、生成物を読み直して独立レビューを行い、`{ gates, review: { result, findings } }` を返す。
-- `<TOOL> record-review --run <run> --result pass|fail --note "<要約>"` で結果を記録する。
+- **G4 が不合格**（writer が `render` の失敗とゲート名を返した）の場合: `record-review` は受け付けられない。`<TOOL> status --run <run>` で不合格のゲート名と次の操作（`render` の再実行）を確認し、writer に再委譲する。同じゲートで 2 回続けて不合格ならハードブロッカーとして、ゲート名と `status` の出力を利用者に示して停止する（手でファイルを直さない）。
+- G4 合格後、`<TOOL> record-review --run <run> --result pass|fail --note "<要約>"` で結果を記録する。
   - `fail`（内容の矛盾など）: 指摘が総評ならば `set-highlight` からやり直す。データの誤りならば `status` と指摘を利用者に示してハードブロッカーとして停止する（手で `findings.json` を直さない）。
 
 ### 手順 8. 完了報告
 
-- `<TOOL> finalize --run <run>`: G3・G4・独立レビューの合格を確認し、`.work/` を削除する。
+- `<TOOL> finalize --run <run>`: G3・G4・独立レビューの合格を確認し、`.work/` を削除する。削除に失敗した場合（エディタ等がファイルを開いている等）は `reviewed` のまま終了してエラーを返すので、ファイルを閉じて `finalize` を再実行する。
 - 出力の `summary` / `completeness` / `statusHighlight` を使い、利用者に次を簡潔に提示する: 保存先（`index.html` のパス）、収集範囲・基準日、投稿数 / イベント数、影響度別件数、90 日以内の High（最大 5 件・リタイア日と対象）、要確認・取得失敗の件数、完全性（`consistent`）。
 
 ---
@@ -152,6 +155,8 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
 
 - `<TOOL> status`（`--run` 省略で最近の実行一覧）→ `<TOOL> status --run <run>` で現在地と次の操作を確認し、`next` に従って続ける。進捗は `.work/state.json` に一元化されており、各サブコマンドは途中から安全に再実行できる。
 - ワーカー起動中に中断した場合: `check-shards` を実行する。書き出されなかったシャードは失敗として扱われ、再委譲バッチが計画される。
+- `render` で G4 が不合格のまま中断した場合: `status` が不合格のゲート名と `render` の再実行を案内する。
+- `finalize` の途中で失敗した場合: 状態は `reviewed` のまま残るため、`finalize` を再実行する。`state.json` が無く `index.html` がある実行は完了として扱われる。
 
 ## 使い方
 
