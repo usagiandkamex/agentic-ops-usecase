@@ -84,12 +84,31 @@ def ev(key, start, prec="day", flags=("unknown", "unknown", "unknown"), same=Non
          "retireDate": {"precision": prec, "start": start, "end": start, "source": "description", "evidence": "Retiring."},
          "dateConflict": False, "dateNoteJa": "", "milestones": [], "impactType": "VersionRetirement",
          "flags": dict(zip(("workloadStop", "dataLossRisk", "autoMigration"), flags)),
-         "flagEvidence": {"workloadStop": "", "dataLossRisk": "", "autoMigration": ""},
+         "flagEvidence": {k: ("" if v == "unknown" else "Stated in the notice.")
+                          for k, v in zip(("workloadStop", "dataLossRisk", "autoMigration"), flags)},
          "classificationStatus": kw.get("cls", "confirmed"), "summaryJa": kw.get("summary", "v1 が廃止される。"),
          "remediationJa": kw.get("rem", ["v2 へ移行する"]), "remediationStatus": "explicit", "migrationTarget": "v2",
          "referenceLinks": kw.get("links", [{"titleJa": "Docs", "url": "https://learn.microsoft.com/azure/foo", "source": "Description", "learnQuery": ""}]),
          "sameEventAs": same}
     return e
+
+
+class DroppingComplementApi(FakeApi):
+    """Drops complement rows from description listings: `drops` holds the id to omit per listing attempt."""
+
+    def __init__(self, data, drops):
+        super().__init__(data)
+        self.drops = list(drops)
+        self.listings = 0
+
+    def __call__(self, url):
+        out = super().__call__(url)
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
+        if "not availabilities/any(a:a/year ge" in q["$filter"] and "description" in q.get("$select", ""):
+            drop = self.drops[min(self.listings, len(self.drops) - 1)]
+            self.listings += 1
+            out["value"] = [v for v in out["value"] if v["id"] != drop]
+        return out
 
 
 class Pipeline(unittest.TestCase):
@@ -267,6 +286,30 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(fin["files"], ["findings.json", "index.html", "progress.md", "retirements.csv"])
         self.assertFalse((run / ".work").exists())
 
+    def test_fallback_all_unions_complement_attempts(self):
+        api.http_get_json = DroppingComplementApi(dataset(), ["204", "205"])  # each attempt misses a different row
+        name, run = self.init()
+        e = self.tool("enumerate", "--run", name)
+        self.assertTrue(e["consistent"])
+        self.assertEqual((e["prefilter"]["screenStatus"], e["prefilter"]["screenedCount"]), ("fallbackAll", 2))
+        self.assertEqual(e["candidateCount"], 17)  # 15 in scope + both complement rows
+        self.tool("record-same-target", "--run", name, "--none")
+        self.assertEqual(self.tool("plan-batches", "--run", name)["G1"]["status"], "pass")
+
+    def test_fallback_all_incomplete_complement_is_inconsistent(self):
+        api.http_get_json = DroppingComplementApi(dataset(), ["205"])  # the same row is missed every time
+        name, run = self.init()
+        e = self.tool("enumerate", "--run", name)
+        self.assertFalse(e["consistent"])
+        self.assertEqual((e["prefilter"]["screenStatus"], e["prefilter"]["screenedCount"]), ("fallbackAll", 1))
+        self.tool("record-same-target", "--run", name, "--none")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        st["enumeration"]["enumeration"]["consistent"] = True  # a consistent=true claim must not hide the gap
+        self.assertTrue(any("prefilter" in f for f in plan.check_g1(dict(st, batches=[], groups=[]))))
+        g1 = self.tool("plan-batches", "--run", name)["G1"]
+        self.assertEqual(g1["status"], "pass")  # recorded (soft) failure: continues, shown in the report
+        self.assertTrue(any("consistent=false" in d for d in g1["details"]))
+
     def test_malformed_shards_are_retried(self):
         name, run = self.init(scope="all")
         self.tool("enumerate", "--run", name)
@@ -412,6 +455,20 @@ class ReviewRegressions(unittest.TestCase):
         self.assertIsNone(ok["b"]["events"][0]["sameEventAs"])
         self.assertEqual(ok["d"]["events"][0]["sameEventAs"]["noticeId"], "a")
         self.assertEqual(len(warn), 2)
+
+    def test_flags_without_evidence_become_unknown(self):
+        e = ev("a", "2027-01-01", flags=("true", "false", "true"))
+        e["flagEvidence"] = {"workloadStop": "", "dataLossRisk": "  ", "autoMigration": "Migrated automatically."}
+        warn: list[str] = []
+        out = shards.validate_event(e, "a", warn)
+        self.assertEqual(out["flags"], {"workloadStop": "unknown", "dataLossRisk": "unknown", "autoMigration": "true"})
+        self.assertEqual(len([w for w in warn if "flagEvidence" in w]), 2)
+        e["flagEvidence"] = {"workloadStop": "Stops.", "dataLossRisk": "No data loss.", "autoMigration": ""}
+        e["flags"]["autoMigration"] = "unknown"
+        warn = []
+        out = shards.validate_event(e, "a", warn)
+        self.assertEqual(out["flags"], {"workloadStop": "true", "dataLossRisk": "false", "autoMigration": "unknown"})
+        self.assertFalse(warn)
 
     def test_split_event_id_does_not_collide(self):
         cands = {"foo": {"id": "foo", "modified": "2026-02-01"}, "foo-1": {"id": "foo-1", "modified": "2026-01-01"}}

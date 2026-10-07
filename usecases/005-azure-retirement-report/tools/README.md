@@ -20,7 +20,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 | 3 | `init --scope <type> [...] --mrc-mcp available\|unavailable` | 保存先フォルダ（JST 秒精度）・`.work/state.json`・`progress.md` を作成 |
 | 4 | `enumerate --run <run>` | 列挙・件数照合・事前絞り込み・`.work/same-target-request.json` |
 | 4 | `record-same-target --run <run> --pairs "<id>,<id>;..."` / `--none` | LLM が判定した同一対象の組を記録（検証付き） |
-| 4 | `plan-batches --run <run>` | 重複候補グループ・バッチ化・ワーカー入力・`findings.json` 骨組み（G1） |
+| 4 | `plan-batches --run <run>` | 重複候補グループ・バッチ化・`findings.json` 骨組み（G1） |
 | 5 | `next-wave --run <run> [--max 6]` | 次に起動するバッチの入力ファイルを作り `dispatch[]` を返す |
 | 5 | `check-shards --run <run>` | シャードの厳格検証・正規化・再委譲バッチの計画（全バッチ完了で G2） |
 | 6 | `merge --run <run>` | 統合・範囲の最終判定・影響度・集計を `findings.json` に書く（G3） |
@@ -62,7 +62,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 - `ledger.prefilter` の等式（`M` = 補完件数、`C` = 候補件数）:
   - `done`: `screenedCount` = `complementCount`、`excludedCount` = `complementCount` − `M`、`C` = 範囲内候補の一意件数 + `M`
   - `notNeeded`（`all`）: 補集合・補完・除外がすべて 0、`C` = 範囲内候補の一意件数
-  - `fallbackAll`（補集合の取得件数が合わない）: `M` = 0・`excludedCount` = 0、補集合の全件を候補にする
+  - `fallbackAll`（補集合の取得件数が合わない）: `M` = 0・`excludedCount` = 0、補集合の全件（2 回の取得結果の和集合）を候補にする。`screenedCount` = 和集合の一意件数、`C` = 範囲内候補の一意件数 + `screenedCount`。`screenedCount` ≠ `complementCount`（補集合の取りこぼし）なら `consistent=false` として記録する（`consistent=true` のまま不一致なら G1 不合格）
 
 ## 重複候補とバッチ（`record-same-target` / `plan-batches`）
 
@@ -73,7 +73,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 ## シャード検証と再委譲（`check-shards`・G2）
 
 - マニフェスト（`expectedNoticeIds` = 割当、`returnedNoticeIds ∪ failedNoticeIds` = 割当・重複なし、`notices[].id` = 返却）が崩れたシャードは、割当の全投稿を失敗にする。投稿ごとの列挙値の誤り・必須キーの欠落はその投稿だけ失敗にする。
-- 無害な正規化: 月精度の `start` / `end` を月初・月末に、日精度の `end` を `start` に揃える、真偽値を `"true"` / `"false"` 文字列に、対応策が空なら `notFound` に。
+- 無害な正規化: 月精度の `start` / `end` を月初・月末に、日精度の `end` を `start` に揃える、真偽値を `"true"` / `"false"` 文字列に、対応策が空なら `notFound` に、根拠（`flagEvidence`）が空の `"true"` / `"false"` フラグは `"unknown"` に（警告を記録）。
 - サニタイズ: 制御文字の除去・長さ上限、メールアドレス / SafeLinks の伏字化、許可リスト外のリンクの除去（SafeLinks は実 URL に復号して再判定）。
 - `sameEventAs` は、参照先が実在し（同じシャード内のイベントか、渡した参照投稿のイベント）、**同じ重複候補グループ**に属し、**根拠（`evidence`）が空でない**場合だけ残す。満たさなければ統合候補から外し、警告として記録する（無関係な投稿の誤統合を防ぐ）。
 - 失敗した投稿**だけ**を再委譲バッチ `B<NN>-r<n>`（シャード `batch-<NN>-r<n>.json`・既存シャードは上書きしない）にまとめる。試行は**投稿ごとに最大 3 回**。3 回失敗した投稿は `ledger.failedNoticeIds`（`retriesExhausted`）になり、処理は続行する。

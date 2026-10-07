@@ -274,10 +274,11 @@ def cmd_enumerate(args: Any, run) -> dict:
         else:
             status = "fallbackAll"
             comp_uniq: dict[str, dict] = {}
-            screened = 0
+            comp_union: dict[str, dict] = {}
             for _ in range(2):
                 comp_raw, _, screened, _ = api_list(complement_filter(y), META_SELECT + ",description")
                 comp_uniq = {v["id"]: v for v in comp_raw}
+                comp_union.update(comp_uniq)
                 if screened == comp_count and len(comp_uniq) == screened:
                     status = "done"
                     break
@@ -289,10 +290,14 @@ def cmd_enumerate(args: Any, run) -> dict:
                 prefilter = {"screenStatus": "done", "screenedCount": comp_count,
                              "bodyYearMatchedNoticeIds": matched, "excludedCount": comp_count - len(matched)}
             else:
-                extra = comp_uniq
-                prefilter = {"screenStatus": "fallbackAll", "screenedCount": screened,
+                # Keep every complement row seen in any attempt; completeness is judged on the union.
+                extra = comp_union
+                prefilter = {"screenStatus": "fallbackAll", "screenedCount": len(comp_union),
                              "bodyYearMatchedNoticeIds": [], "excludedCount": 0}
-                log(st, "enumerate", f"補集合の本文年スクリーニングで件数が一致しないため、補集合の全件（{len(comp_uniq)} 件）を候補にした（fallbackAll）")
+                log(st, "enumerate", f"補集合の本文年スクリーニングで件数が一致しないため、補集合の全件（{len(comp_union)} 件）を候補にした（fallbackAll）")
+                if len(comp_union) != comp_count:
+                    ok = False
+                    log(st, "enumerate", f"補集合の取得結果（一意 {len(comp_union)} 件）が complementCount {comp_count} と一致しないため、列挙の整合が取れていないとして記録した（consistent=false）")
         notices = [notice_meta(v) for v in list(uniq.values()) + [v for k, v in extra.items() if k not in uniq]]
         notices.sort(key=lambda n: id_key(n["id"]))
         cats = sorted({c for n in notices for c in n["productCategories"] if c != "Uncategorized"}, key=ordinal_ignore_case_key)

@@ -121,6 +121,13 @@ def validate_event(e: Any, key: str, warnings: list[str]) -> dict:
                 "evidence": clean_text(same.get("evidence"), 300)}
     else:
         same = None
+    tri = {f: _tri(flags.get(f), f) for f in FLAG_NAMES}
+    fev = {f: clean_text(fe.get(f), 300) for f in FLAG_NAMES}
+    for f in FLAG_NAMES:
+        # A determined flag drives severity, so it must carry evidence from the notice.
+        if tri[f] != "unknown" and not fev[f]:
+            warnings.append(f"{key}: flags.{f} の根拠（flagEvidence）が空のため unknown にした")
+            tri[f] = "unknown"
     return {
         "eventKey": key,
         "affectedScopeJa": clean_text(e.get("affectedScopeJa"), 300),
@@ -129,8 +136,8 @@ def validate_event(e: Any, key: str, warnings: list[str]) -> dict:
         "dateNoteJa": clean_text(e.get("dateNoteJa"), 300),
         "milestones": _milestones(e.get("milestones")),
         "impactType": _enum(e.get("impactType"), IMPACT_TYPES, "impactType"),
-        "flags": {f: _tri(flags.get(f), f) for f in FLAG_NAMES},
-        "flagEvidence": {f: clean_text(fe.get(f), 300) for f in FLAG_NAMES},
+        "flags": tri,
+        "flagEvidence": fev,
         "classificationStatus": _enum(e.get("classificationStatus"), CLASS_STATUSES, "classificationStatus"),
         "summaryJa": summary,
         "remediationJa": rem,

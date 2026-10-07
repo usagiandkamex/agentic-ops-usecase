@@ -233,7 +233,9 @@ def check_g1(st: dict) -> list[str]:
     elif s == "notNeeded":
         ok = en["complementCount"] == pf["screenedCount"] == m == pf["excludedCount"] == 0 and len(cand) == len(in_ids)
     else:
-        ok = m == 0 and pf["excludedCount"] == 0 and len(cand) >= len(in_ids)
+        ok = m == 0 and pf["excludedCount"] == 0 and len(cand) == len(in_ids) + pf["screenedCount"]
+        if en["consistent"] and pf["screenedCount"] != en["complementCount"]:
+            ok = False
     if not ok:
         fails.append(f"ledger.prefilter の等式が成り立たない（screenStatus={s}）")
     assigned: dict[str, int] = {}
