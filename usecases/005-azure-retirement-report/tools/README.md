@@ -41,12 +41,12 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 - フェーズ: `initialized` → `enumerated` → `planned` → `collected` → `merged` → `highlighted` → `rendered` → `reviewed` → `finalized`。各サブコマンドは許可されたフェーズでのみ動き、それ以外は `status` に従うよう案内する。
 - ワーカー起動中に中断した場合は `check-shards` を実行する（書かれなかったシャードは失敗扱いになり、再委譲が計画される）。
 - `render` で G4 が不合格だった場合、`status` は `render` の再実行を案内する（G4 不合格のまま `record-review` は受け付けない）。
-- `finalize` は `state.json` 以外の `.work/` の中身を先に削除し、失敗したら state を `reviewed` のまま残してエラーを返す（ファイルを閉じて再実行できる）。成功後に `progress.md` を完了に更新し、最後に `state.json` と `.work/` を削除する。`state.json` が無く `index.html` がある実行は、空の `.work/` が残っていても `status` で完了として扱う。
+- `finalize` は `state.json` 以外の `.work/` の中身を先に削除し、失敗したら state を `reviewed` のまま残してエラーを返す（ファイルを閉じて再実行できる）。続いて `state.json` を削除し（失敗したら `progress.md` も `reviewed` のまま残してエラーを返す）、削除できてから `progress.md` を完了に更新し、最後に `.work/` を削除する。`state.json` が無く `index.html` がある実行は、空の `.work/` が残っていても `status` で完了として扱う。
 
 ## 本文の取得（手順 5）
 
 - MRC MCP が `利用可`（`init --mrc-mcp available`）: ワーカーが MRC MCP で本文を取得する（`fetchedVia="MRC MCP"`）。
-- MRC MCP が `不可`: ワーカーはネットワークにアクセスしない。`next-wave` が各投稿の本文を公開 API（`GET .../api/v2/azure/<id>`）から取得し、テキストに変換（`<script>` / `<style>` を除去・リンクは許可リストを満たすものだけ `[URL]` で残す・メールアドレス / SafeLinks を伏字化・40,000 文字上限）して入力ファイルの `notices[].body` に入れる（`bodySource="ReleaseCommunicationsApi"`）。ワーカーはそれだけを本文として抽出し（`fetchedVia="ReleaseCommunicationsApi"`）、`body.fetchError` のある投稿は `failedNoticeIds` に入れる（通常の再委譲の対象）。
+- MRC MCP が `不可`: ワーカーはネットワークにアクセスしない。`next-wave` が各投稿の本文を公開 API（`GET .../api/v2/azure/<id>`）から取得し、テキストに変換（`<script>` / `<style>` を除去・リンクは許可リストを満たすものだけ `[URL]` で残す・メールアドレス / SafeLinks を伏字化・40,000 文字上限）して入力ファイルの `notices[].body` に入れる（`bodySource="ReleaseCommunicationsApi"`）。ワーカーはそれだけを本文として抽出し（`fetchedVia="ReleaseCommunicationsApi"`）、`body.fetchError` のある投稿は `failedNoticeIds` に入れる（通常の再委譲の対象）。`next-wave` は本文の出所（`bodySource`）と事前取得に失敗した投稿 ID をバッチの state に記録し、`check-shards` はシャードをそれと照合する（下の正規化ルール参照）。
 - ウェーブ内の全投稿の取得に失敗し、公開 API 自体にも接続できない場合は、状態を変えずに終了コード `3` で終わる（試行回数を消費しない）。ネットワークを確認して `next-wave` を再実行する。
 
 ## 収集範囲
@@ -80,7 +80,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 
 ## シャード検証と再委譲（`check-shards`・G2）
 
-- `fetchedVia` は `"MRC MCP"` / `"ReleaseCommunicationsApi"` の完全一致だけを受け付ける。`dateConflict` は真偽値（または `"true"` / `"false"` 文字列）が必須で、欠落・その他の値はその投稿を失敗にする（`false` とみなさない）。
+- `fetchedVia` は `"MRC MCP"` / `"ReleaseCommunicationsApi"` の完全一致だけを受け付ける。MRC MCP が `不可` の実行では `"ReleaseCommunicationsApi"` 以外を失敗にする。事前取得で `body.fetchError` になった投稿は、シャードで成功として返されても `fetchFailed` として再委譲する。バッチの state に出所の記録が無い・形式が不正・実行の収集能力と一致しない場合は、そのバッチの全投稿を `malformedInput`（通常の再試行の対象）にする。`dateConflict` は真偽値（または `"true"` / `"false"` 文字列）が必須で、欠落・その他の値はその投稿を失敗にする（`false` とみなさない）。
 - マニフェスト（`expectedNoticeIds` = 割当、`returnedNoticeIds ∪ failedNoticeIds` = 割当・重複なし、`notices[].id` = 返却）が崩れたシャードは、割当の全投稿を失敗にする。投稿ごとの列挙値の誤り・必須キーの欠落はその投稿だけ失敗にする。
 - 無害な正規化: 月精度の `start` / `end` を月初・月末に、日精度の `end` を `start` に揃える、真偽値を `"true"` / `"false"` 文字列に、対応策が空なら `notFound` に、根拠（`flagEvidence`）が空の `"true"` / `"false"` フラグは `"unknown"` に、出典（`source` が `description` / `availability`）または根拠（`evidence`）が無い既知のリタイア日は `precision="unknown"` に（いずれも警告を記録）。
 - サニタイズ: 制御文字の除去・長さ上限、メールアドレス / SafeLinks の伏字化、許可リスト外のリンクの除去（SafeLinks は実 URL に復号して再判定）。

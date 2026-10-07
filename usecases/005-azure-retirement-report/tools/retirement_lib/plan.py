@@ -74,8 +74,6 @@ def cmd_record_same_target(args: Any, run: Path) -> dict:
         errors: list[str] = []
         if not args.none:
             text = args.pairs or ""
-            if args.pairs_file:
-                text += ";" + Path(args.pairs_file).read_text(encoding="utf-8")
             for raw in re.split(r"[;\n]+", text):
                 raw = raw.strip()
                 if not raw:
@@ -415,6 +413,9 @@ def cmd_next_wave(args: Any, run: Path) -> dict:
             ref = _resolve_reference(st, b, by_id) if b["refGroupId"] else None
             b["referenceNoticeIds"] = [ref] if ref else []
             b["referenceEvents"] = [[ref, e["eventKey"]] for e in accepted[ref]["events"]] if ref else []
+            # Provenance kept in state (not the worker-readable input file) for check-shards to enforce.
+            b["bodySource"] = "ReleaseCommunicationsApi" if bodies is not None else "MRC MCP"
+            b["prefetchFailedNoticeIds"] = sorted((i for i in b["noticeIds"] if "fetchError" in bodies[i]), key=id_key) if bodies is not None else []
             write_json(run, b["inputPath"], worker_input(st, b, by_id, accepted, run, bodies))
             shard = run / b["shardPath"]
             if shard.exists():

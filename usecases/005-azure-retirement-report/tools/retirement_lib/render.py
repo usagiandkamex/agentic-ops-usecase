@@ -321,16 +321,21 @@ def cmd_finalize(args: Any, run: Path) -> dict:
             write_text(run, "progress.md", render_progress(st))
             raise ToolError(f".work cleanup failed ({type(e).__name__}: {str(e)[:200]}); the run stays 'reviewed'",
                             next=f"ファイルを使用中のプロセスを閉じてから finalize --run {st['runId']} を再実行する")
+        # Remove state.json before marking progress.md finalized, so a failure here leaves both at `reviewed`.
+        try:
+            os.remove(os.path.join(real_work, "state.json"))
+        except OSError as e:
+            raise ToolError(f"state.json removal failed ({type(e).__name__}: {str(e)[:200]}); the run stays 'reviewed'",
+                            next=f"ファイルを使用中のプロセスを閉じてから finalize --run {st['runId']} を再実行する")
         st["phase"] = "finalized"
         log(st, "finalize", ".work/ を削除して完了")
         write_text(run, "progress.md", render_progress(st))
         try:
-            os.remove(os.path.join(real_work, "state.json"))
             os.rmdir(real_work)
         except OSError as e:
             raise ToolError(f".work cleanup failed ({type(e).__name__}: {str(e)[:200]})",
-                            next=f"finalize --run {st['runId']} を再実行する（state が残っていれば再試行でき、"
-                                 "state が削除済みなら status が完了として扱う）")
+                            next=f"state は削除済みのため完了として扱われる（status --run {st['runId']} で確認できる）。"
+                                 "空の .work フォルダが残っている場合は利用者に削除を依頼する")
     s = f["summary"]
     led = f["ledger"]
     return {"run": run.name, "reportFolder": str(run), "files": sorted(p.name for p in run.iterdir()),

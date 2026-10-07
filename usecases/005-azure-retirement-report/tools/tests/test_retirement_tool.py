@@ -413,6 +413,65 @@ class Pipeline(unittest.TestCase):
         self.tool("check-shards", "--run", name)
         self.assertEqual(self.drive(name, run, spec)["G2"]["failed"], ["203"])
 
+    def test_mrc_unavailable_enforces_dispatch_provenance(self):
+        self.fake.body_failures = {"203"}
+        name, run = self._plan_all(mrc="unavailable")
+        self.tool("next-wave", "--run", name)
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        b203 = next(b for b in st["batches"] if "203" in b["noticeIds"])
+        self.assertEqual(b203["bodySource"], "ReleaseCommunicationsApi")
+        self.assertEqual(b203["prefetchFailedNoticeIds"], ["203"])
+        # Worker ignores body.fetchError for 203 and claims MRC MCP for 204; both must be rejected.
+        self.simulate(run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok",
+                                                       "fetchedVia": "MRC MCP" if nid == "204" else "ReleaseCommunicationsApi",
+                                                       "titleJa": "x", "events": [ev(nid, "2027-01-01")]})
+        c = self.tool("check-shards", "--run", name)
+        failed = {k: v for r in c["checked"] for k, v in r["failed"].items()}
+        self.assertTrue(failed["203"].startswith("fetchFailed"))
+        self.assertIn("fetchedVia", failed["204"])
+        self.assertEqual(set(failed), {"203", "204"})
+        # Retries: the body for 203 can now be fetched, so it is accepted on redispatch.
+        self.fake.body_failures = set()
+        g2 = self.drive(name, run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "ReleaseCommunicationsApi",
+                                                              "titleJa": "x", "events": [ev(nid, "2027-01-01")]})
+        self.assertEqual(g2["G2"]["failed"], [])
+
+    def test_missing_dispatch_provenance_fails_closed(self):
+        name, run = self._plan_all(mrc="unavailable")
+        self.tool("next-wave", "--run", name)
+        sp = run / ".work" / "state.json"
+        st = json.loads(sp.read_text(encoding="utf-8"))
+        b = next(x for x in st["batches"] if x["status"] == "dispatched")
+        del b["bodySource"]
+        sp.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+        self.simulate(run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "ReleaseCommunicationsApi",
+                                                       "titleJa": "x", "events": [ev(nid, "2027-01-01")]})
+        c = self.tool("check-shards", "--run", name)
+        r = next(x for x in c["checked"] if x["batchId"] == b["batchId"])
+        self.assertTrue(r["failed"] and all(v.startswith("malformedInput") for v in r["failed"].values()))
+
+    def test_malformed_dispatch_provenance_never_crashes(self):
+        ids = ["a", "b", "c", "d"]
+        st = {"groups": [], "enumeration": {"allowedCategories": ["Uncategorized"]}, "capabilities": {"mrcMcp": "不可"}}
+        import tempfile
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            (tmp / ".work").mkdir()
+            (tmp / ".work" / "s.json").write_text(json.dumps({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": [],
+                                                               "failedNoticeIds": [{"id": i} for i in ids], "notices": []}), encoding="utf-8")
+            meta = {i: {"id": i, "title": i} for i in ids}
+            for pf in ([["a"]], ["zz"], ["a", "a"], None, "a"):
+                b = {"batchId": "B01", "noticeIds": ids, "shardPath": ".work/s.json", "bodySource": "ReleaseCommunicationsApi",
+                     "prefetchFailedNoticeIds": pf}
+                ok, fail, _, _ = shards.check_batch(tmp, st, b, meta, {})
+                self.assertEqual(ok, {})
+                self.assertTrue(all(v.startswith("malformedInput") for v in fail.values()), pf)
+            b = {"batchId": "B01", "noticeIds": ids, "shardPath": ".work/s.json", "bodySource": "MRC MCP", "prefetchFailedNoticeIds": ["a"]}
+            ok, fail, _, _ = shards.check_batch(tmp, dict(st, capabilities={"mrcMcp": "利用可"}), b, meta, {})
+            self.assertTrue(all(v.startswith("malformedInput") for v in fail.values()))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_body_prefetch_outage_leaves_state_unchanged(self):
         name, run = self._plan_all(mrc="unavailable")
         self.fake.down = True
@@ -459,6 +518,7 @@ class Pipeline(unittest.TestCase):
         finally:
             render.os.remove = orig_rm
         self.assertEqual(self.tool("status", "--run", name)["phase"], "reviewed")
+        self.assertIn("現在地: reviewed", (run / "progress.md").read_text(encoding="utf-8"))
         fin = self.tool("finalize", "--run", name)
         self.assertEqual(fin["files"], ["findings.json", "index.html", "progress.md", "retirements.csv"])
         self.assertEqual(self.tool("status", "--run", name)["phase"], "finalized")
@@ -556,8 +616,9 @@ class ReviewRegressions(unittest.TestCase):
         self.meta = {i: {"id": i, "title": f"t {i}", "products": [], "productCategories": [], "availabilityMonth": None,
                          "created": "", "modified": "2026-01-01T00:00:00Z"} for i in ("a", "b", "c", "d")}
         self.st = {"groups": [{"groupId": "G01", "noticeIds": ["a", "b", "d"], "anchorNoticeId": "a"}],
-                   "enumeration": {"allowedCategories": ["Uncategorized"]}}
-        self.b = {"batchId": "B01", "noticeIds": ["a", "b", "c", "d"], "shardPath": ".work/batch-01.json", "referenceEvents": []}
+                   "enumeration": {"allowedCategories": ["Uncategorized"]}, "capabilities": {"mrcMcp": "利用可"}}
+        self.b = {"batchId": "B01", "noticeIds": ["a", "b", "c", "d"], "shardPath": ".work/batch-01.json", "referenceEvents": [],
+                  "bodySource": "MRC MCP", "prefetchFailedNoticeIds": []}
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)

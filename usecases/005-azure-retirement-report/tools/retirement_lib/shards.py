@@ -157,13 +157,15 @@ def validate_event(e: Any, key: str, warnings: list[str]) -> dict:
     }
 
 
-def validate_notice(n: Any, meta: dict, allowed: list[str], warnings: list[str]) -> dict:
+def validate_notice(n: Any, meta: dict, allowed: list[str], warnings: list[str], required_via: str | None = None) -> dict:
     nid = meta["id"]
     if n.get("fetchStatus", "ok") != "ok":
         raise ShardError("fetchStatus must be ok for returned notices")
     via = n.get("fetchedVia")
     if via not in FETCHED_VIA:
         raise ShardError("fetchedVia must be \"MRC MCP\" or \"ReleaseCommunicationsApi\"")
+    if required_via and via != required_via:
+        raise ShardError(f"fetchedVia must be \"{required_via}\" (bodies were prefetched by the tool)")
     events = n.get("events")
     if not isinstance(events, list) or not events:
         raise ShardError("events[] must have at least one event")
@@ -195,6 +197,14 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
     warnings: list[str] = []
     if not path.exists():
         return {}, {i: "shardMissing" for i in assigned}, warnings, None
+    mrc = st.get("capabilities", {}).get("mrcMcp")
+    api_mode = mrc == "不可"
+    pf = b.get("prefetchFailedNoticeIds")
+    if (mrc not in ("利用可", "不可") or b.get("bodySource") != ("ReleaseCommunicationsApi" if api_mode else "MRC MCP")
+            or not isinstance(pf, list) or not all(isinstance(x, str) and x in assigned for x in pf)
+            or len(set(pf)) != len(pf) or (pf and not api_mode)):
+        return {}, {i: "malformedInput: dispatch provenance missing or inconsistent (redispatch)" for i in assigned}, warnings, None
+    prefetch_failed = set(pf)
     try:
         sh = read_json(path)
         if not isinstance(sh, dict):
@@ -233,8 +243,12 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
         failures[f["id"]] = "fetchFailed: " + clean_text(f.get("reason"), 100)
     for n in notices:
         nid = n["id"]
+        if nid in prefetch_failed:
+            failures[nid] = "fetchFailed: 本文の事前取得に失敗（入力の body.fetchError）"
+            continue
         try:
-            rec = validate_notice(n, meta[nid], st["enumeration"]["allowedCategories"], warnings)
+            rec = validate_notice(n, meta[nid], st["enumeration"]["allowedCategories"], warnings,
+                                  required_via="ReleaseCommunicationsApi" if api_mode else None)
             rec["batchId"] = b["batchId"]
             ok[nid] = rec
         except ShardError as ex:

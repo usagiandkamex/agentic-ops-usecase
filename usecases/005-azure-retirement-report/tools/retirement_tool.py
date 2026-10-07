@@ -45,7 +45,6 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd("enumerate", "step 4: enumerate candidates and write the same-target request")
     q = run_cmd("record-same-target", "step 4: record LLM same-target pairs")
     q.add_argument("--pairs", help='"id,id;id,id"')
-    q.add_argument("--pairs-file", dest="pairs_file", help="text file with one 'id,id' pair per line")
     q.add_argument("--none", action="store_true", help="no same-target pairs")
     run_cmd("plan-batches", "step 4: duplicate-candidate groups, batches, findings skeleton (G1)")
     q = run_cmd("next-wave", "step 5: dispatch the next wave of worker batches")
