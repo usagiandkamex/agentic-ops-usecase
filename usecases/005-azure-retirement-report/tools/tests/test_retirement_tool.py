@@ -21,7 +21,7 @@ TOOLS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOLS))
 
 import retirement_tool  # noqa: E402
-from retirement_lib import api, common, merge, plan, shards  # noqa: E402
+from retirement_lib import api, common, merge, plan, progress, render, shards  # noqa: E402
 
 AS_OF = "2026-10-07"
 FIXED_NOW = dt.datetime(1999, 1, 1, 0, 0, 0, tzinfo=common.JST)
@@ -57,11 +57,20 @@ class FakeApi:
     def __init__(self, data):
         self.data = data
         self.calls = 0
+        self.body_failures: set[str] = set()
+        self.down = False
 
     def __call__(self, url):
         self.calls += 1
+        if self.down:
+            raise common.ToolError("Release Communications API GET failed: test outage", code=3)
         p = urllib.parse.urlsplit(url)
         assert p.scheme == "https" and p.hostname == api.API_HOST
+        if p.path != api.API_PATH:  # single notice: /azure/<id>
+            nid = urllib.parse.unquote(p.path.rsplit("/", 1)[1])
+            if nid in self.body_failures:
+                raise common.ToolError("Release Communications API GET failed: test", code=3)
+            return dict(next(r for r in self.data if r["id"] == nid))
         q = dict(urllib.parse.parse_qsl(p.query))
         flt = q["$filter"]
         m = re.search(r"year ge (\d{4})", flt)
@@ -135,8 +144,8 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(code, expect, out)
         return out
 
-    def init(self, scope="next12Months"):
-        out = self.tool("init", "--scope", scope, "--as-of", AS_OF, "--mrc-mcp", "available")
+    def init(self, scope="next12Months", mrc="available"):
+        out = self.tool("init", "--scope", scope, "--as-of", AS_OF, "--mrc-mcp", mrc)
         run = common.reports_root() / out["run"]
         self.created.append(run)
         return out["run"], run
@@ -373,7 +382,103 @@ class Pipeline(unittest.TestCase):
         self.assertIn("next-wave", st["next"])
 
 
+    def _plan_all(self, mrc="available"):
+        name, run = self.init(scope="all", mrc=mrc)
+        self.tool("enumerate", "--run", name)
+        self.tool("record-same-target", "--run", name, "--none")
+        self.tool("plan-batches", "--run", name)
+        return name, run
+
+    def test_mrc_unavailable_prefetches_bodies_with_the_reviewed_client(self):
+        self.fake.body_failures = {"203"}
+        name, run = self._plan_all(mrc="unavailable")
+        w = self.tool("next-wave", "--run", name)
+        self.assertTrue(all("ReleaseCommunicationsApi" in d["workerPrompt"] for d in w["dispatch"]))
+        bodies = {}
+        for d in w["dispatch"]:
+            inp = json.loads(Path(d["inputPath"]).read_text(encoding="utf-8"))
+            self.assertEqual(inp["bodySource"], "ReleaseCommunicationsApi")
+            bodies.update({n["id"]: n["body"] for n in inp["notices"]})
+        self.assertIn("March 1, 2027", bodies["204"]["bodyText"])
+        self.assertNotIn("<p>", bodies["204"]["bodyText"])
+        self.assertIn("fetchError", bodies["203"])
+
+        def spec(nid, attempt, inp):
+            body = next(n["body"] for n in inp["notices"] if n["id"] == nid)
+            if "fetchError" in body:
+                return None
+            return {"id": nid, "fetchStatus": "ok", "fetchedVia": "ReleaseCommunicationsApi", "titleJa": "x",
+                    "events": [ev(nid, "2027-01-01")]}
+        self.simulate(run, spec)
+        self.tool("check-shards", "--run", name)
+        self.assertEqual(self.drive(name, run, spec)["G2"]["failed"], ["203"])
+
+    def test_body_prefetch_outage_leaves_state_unchanged(self):
+        name, run = self._plan_all(mrc="unavailable")
+        self.fake.down = True
+        before = (run / ".work" / "state.json").read_text(encoding="utf-8")
+        self.tool("next-wave", "--run", name, expect=3)
+        self.assertEqual((run / ".work" / "state.json").read_text(encoding="utf-8"), before)
+        self.assertIn("next-wave", self.tool("status", "--run", name)["next"])
+
+    def test_mrc_available_does_not_fetch_bodies(self):
+        name, run = self._plan_all()
+        calls = self.fake.calls
+        w = self.tool("next-wave", "--run", name)
+        self.assertEqual(self.fake.calls, calls)
+        inp = json.loads(Path(w["dispatch"][0]["inputPath"]).read_text(encoding="utf-8"))
+        self.assertTrue(all("body" not in n for n in inp["notices"]))
+
+    def _to_reviewed(self):
+        name, run = self._plan_all()
+        self.drive(name, run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP",
+                                                          "titleJa": "x", "events": [ev(nid, "2027-01-01")]})
+        self.tool("merge", "--run", name)
+        self.tool("set-highlight", "--run", name, "--text", "テスト用の総評です。High の件数と 90 日以内の件数を確認してください。")
+        self.tool("render", "--run", name)
+        self.tool("record-review", "--run", name, "--result", "pass")
+        return name, run
+
+    def test_finalize_cleanup_failure_is_retryable(self):
+        name, run = self._to_reviewed()
+        orig = render.shutil.rmtree
+
+        def boom(*a, **k):
+            raise PermissionError("locked")
+        render.shutil.rmtree = boom
+        try:
+            out = self.tool("finalize", "--run", name, expect=2)
+        finally:
+            render.shutil.rmtree = orig
+        self.assertIn("finalize", out["next"])
+        self.assertEqual(self.tool("status", "--run", name)["phase"], "reviewed")
+        orig_rm = render.os.remove
+        render.os.remove = boom
+        try:
+            self.tool("finalize", "--run", name, expect=2)
+        finally:
+            render.os.remove = orig_rm
+        self.assertEqual(self.tool("status", "--run", name)["phase"], "reviewed")
+        fin = self.tool("finalize", "--run", name)
+        self.assertEqual(fin["files"], ["findings.json", "index.html", "progress.md", "retirements.csv"])
+        self.assertEqual(self.tool("status", "--run", name)["phase"], "finalized")
+
+    def test_status_when_only_an_empty_work_dir_remains(self):
+        name, run = self._to_reviewed()
+        self.tool("finalize", "--run", name)
+        (run / ".work").mkdir()  # e.g. the final rmdir failed after state.json was removed
+        self.assertEqual(self.tool("status", "--run", name)["phase"], "finalized")
+        self.assertIn("finalized", (run / "progress.md").read_text(encoding="utf-8"))
+
+
 class Units(unittest.TestCase):
+    def test_failed_g4_routes_back_to_render(self):
+        st = {"runId": "r", "phase": "rendered", "gates": {"G4": {"status": "fail", "gates": {"4c CSP": "fail: x", "1": "pass"}}}}
+        self.assertIn("render --run r", progress.next_action(st))
+        self.assertIn("4c CSP", progress.next_action(st))
+        st["gates"]["G4"]["status"] = "pass"
+        self.assertIn("record-review", progress.next_action(st))
+
     def test_scope(self):
         d = dt.date(2026, 10, 15)
         self.assertEqual(api.compute_scope("default", d)["windowStart"], "2026-07-01")
@@ -525,6 +630,29 @@ class ReviewRegressions(unittest.TestCase):
         out = shards.validate_event(e, "a", warn)
         self.assertEqual((out["retireDate"]["precision"], out["retireDate"]["end"]), ("month", "2027-01-31"))
         self.assertFalse(warn)
+
+    def test_date_conflict_must_be_boolean(self):
+        for v, want in ((True, True), ("false", False), (" TRUE ", True)):
+            e = ev("a", "2027-01-01")
+            e["dateConflict"] = v
+            self.assertIs(shards.validate_event(e, "a", [])["dateConflict"], want)
+        for v in ("invalid", None, 1, "yes"):
+            e = ev("a", "2027-01-01")
+            e["dateConflict"] = v
+            with self.assertRaises(shards.ShardError):
+                shards.validate_event(e, "a", [])
+        e = ev("a", "2027-01-01")
+        del e["dateConflict"]
+        with self.assertRaises(shards.ShardError):
+            shards.validate_event(e, "a", [])
+
+    def test_fetched_via_must_match_exactly(self):
+        meta = self.meta["a"]
+        for via in ("MRC MCP", "ReleaseCommunicationsApi"):
+            self.assertEqual(shards.validate_notice(dict(self.n("a"), fetchedVia=via), meta, ["Uncategorized"], [])["fetchedVia"], via)
+        for via in ("not api", "mcp", "api", "", None, "mrc mcp"):
+            with self.assertRaises(shards.ShardError):
+                shards.validate_notice(dict(self.n("a"), fetchedVia=via), meta, ["Uncategorized"], [])
 
     def test_split_event_id_does_not_collide(self):
         cands = {"foo": {"id": "foo", "modified": "2026-02-01"}, "foo-1": {"id": "foo-1", "modified": "2026-01-01"}}

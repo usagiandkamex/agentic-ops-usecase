@@ -40,6 +40,10 @@ def next_action(st: dict) -> str:
     if p == "highlighted":
         return f"report-writer に委譲: render --run {run} → 独立レビュー"
     if p == "rendered":
+        if st.get("gates", {}).get("G4", {}).get("status") != "pass":
+            failed = [k for k, v in st.get("gates", {}).get("G4", {}).get("gates", {}).items() if v != "pass"]
+            return (f"G4 不合格（{', '.join(failed) or '詳細は render の出力'}）: render --run {run} を再実行する"
+                    "（同じゲートで再び不合格なら、記録された不合格ゲートを利用者に報告して止める）")
         return f"独立レビュー → record-review --run {run} --result pass|fail"
     if p == "reviewed":
         return f"finalize --run {run}"
@@ -125,8 +129,12 @@ def cmd_status(args: Any) -> dict:
     try:
         st = load_state(run)
     except ToolError:
-        return {"run": run.name, "phase": "finalized" if (run / "index.html").exists() and not (run / ".work").exists() else "unknown",
-                "next": "完了済み、または state が無い（新しい実行は init から）"}
+        if (run / "index.html").exists() and not (run / ".work" / "state.json").exists():
+            if (run / ".work").exists():
+                return {"run": run.name, "phase": "finalized",
+                        "next": "完了済み（state は削除済み）。空の .work フォルダが残っている場合は利用者に削除を依頼する"}
+            return {"run": run.name, "phase": "finalized", "next": "完了済み（新しい実行は init から）"}
+        return {"run": run.name, "phase": "unknown", "next": "state が無い（新しい実行は init から）"}
     out: dict = {"run": run.name, "phase": st["phase"], "scope": st["scope"]["label"], "gates": {k: v.get("status") for k, v in st.get("gates", {}).items()},
                  "next": next_action(st)}
     if st.get("batches"):

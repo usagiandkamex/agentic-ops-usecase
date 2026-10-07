@@ -1,7 +1,8 @@
-"""Steps 2-4.5: scope, public API access (GET only, exact origin), probe / init / enumerate."""
+"""Steps 2-5: scope, public API access (GET only, exact origin), probe / init / enumerate, notice bodies."""
 from __future__ import annotations
 
 import datetime as dt
+import html.parser
 import json
 import re
 import time
@@ -10,10 +11,11 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
-from .common import (MAX_ATTEMPTS, REPO_REL_REPORTS, SCHEMA_VERSION, TOOL_VERSION, NOTICE_ID_RE, RunLock,
-                     ToolError, add_months, clean_list, clean_text, id_key, jst_stamp, load_state, log,
-                     month_bounds, month_number, now_jst, ordinal_ignore_case_key, reports_root, require_phase,
-                     save_state, snapshot_id, write_json, write_text)
+from .common import (CTRL_RE, EMAIL_RE, MAX_ATTEMPTS, REDACTED_EMAIL, REDACTED_LINK, REPO_REL_REPORTS,
+                     SAFELINKS_TOKEN_RE, SCHEMA_VERSION, TOOL_VERSION, NOTICE_ID_RE, RunLock, ToolError, add_months,
+                     clean_list, clean_text, id_key, jst_stamp, load_state, log, month_bounds, month_number,
+                     normalize_link, now_jst, ordinal_ignore_case_key, reports_root, require_phase, save_state,
+                     snapshot_id, write_json, write_text)
 
 API_BASE = "https://www.microsoft.com/releasecommunications/api/v2/azure"
 API_HOST = "www.microsoft.com"
@@ -243,6 +245,76 @@ def notice_meta(v: dict) -> dict:
 
 def _has_year_ge(text: str, y: int) -> bool:
     return any(int(m.group(0)) >= y for m in YEAR_RE.finditer(text))
+
+
+# ---------------------------------------------------------------- notice body (MRC MCP unavailable)
+
+MAX_BODY_CHARS = 40000
+_BLOCK_TAGS = {"p", "div", "br", "li", "ul", "ol", "tr", "table", "h1", "h2", "h3", "h4", "h5", "h6", "section", "blockquote"}
+
+
+class _BodyText(html.parser.HTMLParser):
+    """HTML -> plain text. Links are kept as `text [url]` only when they pass the allowlist (SafeLinks unwrapped)."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.href: list[str | None] = []
+        self.skip = 0
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag in ("script", "style"):
+            self.skip += 1
+        if tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+        if tag == "li":
+            self.parts.append("- ")
+        if tag in ("td", "th"):
+            self.parts.append(" | ")
+        if tag == "a":
+            self.href.append(normalize_link(dict(attrs).get("href")))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("script", "style") and self.skip:
+            self.skip -= 1
+        if tag == "a" and self.href:
+            url = self.href.pop()
+            if url:
+                self.parts.append(f" [{url}]")
+        if tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self.skip:
+            self.parts.append(data)
+
+
+def body_text(description: Any) -> str:
+    p = _BodyText()
+    p.feed(description if isinstance(description, str) else "")
+    p.close()
+    lines = []
+    for line in "".join(p.parts).splitlines():
+        line = re.sub(r"\s{2,}", " ", CTRL_RE.sub(" ", line)).strip()
+        line = SAFELINKS_TOKEN_RE.sub(REDACTED_LINK, EMAIL_RE.sub(REDACTED_EMAIL, line))
+        if line:
+            lines.append(line)
+    text = "\n".join(lines)
+    return text if len(text) <= MAX_BODY_CHARS else text[: MAX_BODY_CHARS - 1] + "…"
+
+
+def fetch_notice_body(nid: str) -> dict:
+    """GET one notice (exact API origin) and return sanitized plain-text fields for the worker input file."""
+    if not isinstance(nid, str) or not NOTICE_ID_RE.match(nid):
+        raise ToolError("invalid notice id")
+    d = http_get_json(API_BASE + "/" + urllib.parse.quote(nid, safe=""))
+    if not isinstance(d, dict) or d.get("id") != nid:
+        raise ToolError("unexpected API response for a notice", code=3)
+    avails = [{"ring": clean_text(a.get("ring"), 40), "year": a.get("year"), "month": clean_text(a.get("month"), 20)}
+              for a in (d.get("availabilities") or []) if isinstance(a, dict)
+              and isinstance(a.get("year"), int) and not isinstance(a.get("year"), bool)][:10]
+    return {"title": clean_text(d.get("title"), 400), "modified": clean_text(d.get("modified"), 40),
+            "availabilities": avails, "bodyText": body_text(d.get("description"))}
 
 
 def cmd_enumerate(args: Any, run) -> dict:

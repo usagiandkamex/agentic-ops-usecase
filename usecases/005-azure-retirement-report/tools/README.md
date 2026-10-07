@@ -21,13 +21,13 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 | 4 | `enumerate --run <run>` | 列挙・件数照合・事前絞り込み・`.work/same-target-request.json` |
 | 4 | `record-same-target --run <run> --pairs "<id>,<id>;..."` / `--none` | LLM が判定した同一対象の組を記録（検証付き） |
 | 4 | `plan-batches --run <run>` | 重複候補グループ・バッチ化・`findings.json` 骨組み（G1） |
-| 5 | `next-wave --run <run> [--max 6]` | 次に起動するバッチの入力ファイルを作り `dispatch[]` を返す |
+| 5 | `next-wave --run <run> [--max 6]` | 次に起動するバッチの入力ファイルを作り `dispatch[]` を返す（MRC MCP が `不可` の実行では、各投稿の本文を公開 API から取得して入力ファイルに入れる） |
 | 5 | `check-shards --run <run>` | シャードの厳格検証・正規化・再委譲バッチの計画（全バッチ完了で G2） |
 | 6 | `merge --run <run>` | 統合・範囲の最終判定・影響度・集計を `findings.json` に書く（G3） |
 | 6 | `set-highlight --run <run> --text "..."` | 総評を記録（G3 を再実行） |
 | 7 | `render --run <run>` | `index.html` / `retirements.csv` を生成し検証ゲート 1〜8 を実行（G4） |
 | 7 | `record-review --run <run> --result pass\|fail [--note ...]` | 独立レビューの結果を記録 |
-| 8 | `finalize --run <run>` | G3・G4・レビュー合格を確認し `.work/` を削除 |
+| 8 | `finalize --run <run>` | G3・G4・レビュー合格を確認し `.work/` を削除（削除に失敗したら `reviewed` のまま終了し、再実行できる） |
 | — | `verify --run <run>` | G3 / G4 の読み取り専用の再実行 |
 | — | `status [--run <run>]` | 現在地と次の操作（`--run` 省略で最近の実行一覧）。中断からの再開に使う |
 
@@ -40,6 +40,14 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 - 書き込みはすべて一時ファイル → 置換（原子的）。同じ実行への同時実行はロックファイル `reports/.<run>.lock`（`.gitignore` 済み）への OS ファイルロック（POSIX は `flock`、Windows は `msvcrt.locking`）で防ぐ。ロックは保持プロセスの終了時に OS が解放するため、長時間の実行を経過時間だけで古いロックとみなして奪うことはなく、異常終了後に残ったファイルも次の実行を妨げない。
 - フェーズ: `initialized` → `enumerated` → `planned` → `collected` → `merged` → `highlighted` → `rendered` → `reviewed` → `finalized`。各サブコマンドは許可されたフェーズでのみ動き、それ以外は `status` に従うよう案内する。
 - ワーカー起動中に中断した場合は `check-shards` を実行する（書かれなかったシャードは失敗扱いになり、再委譲が計画される）。
+- `render` で G4 が不合格だった場合、`status` は `render` の再実行を案内する（G4 不合格のまま `record-review` は受け付けない）。
+- `finalize` は `state.json` 以外の `.work/` の中身を先に削除し、失敗したら state を `reviewed` のまま残してエラーを返す（ファイルを閉じて再実行できる）。成功後に `progress.md` を完了に更新し、最後に `state.json` と `.work/` を削除する。`state.json` が無く `index.html` がある実行は、空の `.work/` が残っていても `status` で完了として扱う。
+
+## 本文の取得（手順 5）
+
+- MRC MCP が `利用可`（`init --mrc-mcp available`）: ワーカーが MRC MCP で本文を取得する（`fetchedVia="MRC MCP"`）。
+- MRC MCP が `不可`: ワーカーはネットワークにアクセスしない。`next-wave` が各投稿の本文を公開 API（`GET .../api/v2/azure/<id>`）から取得し、テキストに変換（`<script>` / `<style>` を除去・リンクは許可リストを満たすものだけ `[URL]` で残す・メールアドレス / SafeLinks を伏字化・40,000 文字上限）して入力ファイルの `notices[].body` に入れる（`bodySource="ReleaseCommunicationsApi"`）。ワーカーはそれだけを本文として抽出し（`fetchedVia="ReleaseCommunicationsApi"`）、`body.fetchError` のある投稿は `failedNoticeIds` に入れる（通常の再委譲の対象）。
+- ウェーブ内の全投稿の取得に失敗し、公開 API 自体にも接続できない場合は、状態を変えずに終了コード `3` で終わる（試行回数を消費しない）。ネットワークを確認して `next-wave` を再実行する。
 
 ## 収集範囲
 
@@ -72,6 +80,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 
 ## シャード検証と再委譲（`check-shards`・G2）
 
+- `fetchedVia` は `"MRC MCP"` / `"ReleaseCommunicationsApi"` の完全一致だけを受け付ける。`dateConflict` は真偽値（または `"true"` / `"false"` 文字列）が必須で、欠落・その他の値はその投稿を失敗にする（`false` とみなさない）。
 - マニフェスト（`expectedNoticeIds` = 割当、`returnedNoticeIds ∪ failedNoticeIds` = 割当・重複なし、`notices[].id` = 返却）が崩れたシャードは、割当の全投稿を失敗にする。投稿ごとの列挙値の誤り・必須キーの欠落はその投稿だけ失敗にする。
 - 無害な正規化: 月精度の `start` / `end` を月初・月末に、日精度の `end` を `start` に揃える、真偽値を `"true"` / `"false"` 文字列に、対応策が空なら `notFound` に、根拠（`flagEvidence`）が空の `"true"` / `"false"` フラグは `"unknown"` に、出典（`source` が `description` / `availability`）または根拠（`evidence`）が無い既知のリタイア日は `precision="unknown"` に（いずれも警告を記録）。
 - サニタイズ: 制御文字の除去・長さ上限、メールアドレス / SafeLinks の伏字化、許可リスト外のリンクの除去（SafeLinks は実 URL に復号して再判定）。
@@ -91,7 +100,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 
 ## 安全性
 
-- **ネットワーク**: `https://www.microsoft.com/releasecommunications/api/v2/azure` への GET だけ（オリジン固定・リダイレクトを辿らない・タイムアウト・応答サイズ上限・JSON 以外は拒否）。取得データ中の URL には一切アクセスしない。
+- **ネットワーク**: `https://www.microsoft.com/releasecommunications/api/v2/azure`（一覧）と `.../azure/<id>`（MRC MCP が不可の実行での本文）への GET だけ（オリジン固定・リダイレクトを辿らない・タイムアウト・応答サイズ上限・JSON 以外は拒否）。取得データ中の URL には一切アクセスしない。
 - **ファイル**: 書き込みは `usecases/005-azure-retirement-report/reports/<run>/` 配下のみ（フォルダ名の形式・リンク / ジャンクションを検査）。`.work/` の削除は `finalize` だけが行う。
 - **取得データ**: タイトル・本文・ワーカーの抽出結果はすべて外部データとして扱い、描画は単一パスの置換（差し込んだデータを再走査しない）とシンク別エスケープで行う。
 - Azure リソース・サブスクリプションへはアクセスしない。

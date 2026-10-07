@@ -27,6 +27,7 @@ applyTo: 'usecases/005-azure-retirement-report/**'
 - **新しいスクリプト（Python / PowerShell / JavaScript 等）やインラインコードを作らない・実行しない**。端末で実行してよいのは同梱ツールのサブコマンドだけ。ツールが書くファイル（`findings.json` / HTML / CSV / `progress.md` / `.work/` 配下）を編集ツールで直接書き換えない（例外: ワーカーが自分のシャードを書く）。
   - 001〜004 の「生成スクリプトを作らない」原則の **005 限定の例外**。理由: 005 は数百件の投稿を決定論的に統合・転記する処理が中心で、手作業の分割編集では完走できない（Issue #55）。例外はリポジトリでレビュー済みのツールに限り、実行時にコードを生成させない。
 - LLM が担うのは判断だけ: 収集範囲の確認と承認、本文からの抽出（ワーカー）、同一対象（sameTarget）の判定、総評、独立レビュー、完了報告。
+- **MRC MCP が使えない場合の本文取得**も同梱ツールで行う: `init --mrc-mcp unavailable` の実行では `next-wave` が公開 API から本文を取得してワーカーの入力ファイル（`notices[].body`）に入れる。ワーカーは Web 取得・端末実行をせず、入力ファイルの本文だけを使う（`fetchedVia="ReleaseCommunicationsApi"`）。エージェント定義の記述と食い違う場合はこちらと [tools/README.md](../../usecases/005-azure-retirement-report/tools/README.md) を優先する。
 - **件数が多いことを理由に停止しない**。中断した場合は `status` で現在地と次の操作を確認して再開する。
 - テンプレートの **ロジック用 `<script>` と CSP の `<meta>` は改変しない**（sha256 ハッシュで許可している。ツールの検証ゲート 4c がハッシュを再計算して照合する）。テンプレートの JS を変更した場合は、ハッシュを再計算して CSP を更新すること。
 - ツールを変更した場合は `python -m unittest discover -s usecases/005-azure-retirement-report/tools/tests` を通す。

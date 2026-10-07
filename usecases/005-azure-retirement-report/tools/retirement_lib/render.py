@@ -302,15 +302,35 @@ def cmd_finalize(args: Any, run: Path) -> dict:
         if not all(v == "pass" for v in gates.values()):
             raise ToolError("G4 failed at finalize", code=1, gates=gates)
         f = read_json(run / "findings.json")
-        st["phase"] = "finalized"
-        log(st, "finalize", ".work/ を削除して完了")
-        save_state(run, st)
-        write_text(run, "progress.md", render_progress(st))
         work = run / ".work"
         real_work = os.path.realpath(work)
         if os.path.normcase(real_work) != os.path.normcase(os.path.join(os.path.realpath(run), ".work")):
             raise ToolError(".work is not inside the run folder")
-        shutil.rmtree(real_work)
+        # Remove everything except state.json first: if this fails, the state stays `reviewed`, so finalize is retryable.
+        try:
+            for child in sorted(Path(real_work).iterdir()):
+                if child.name == "state.json":
+                    continue
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        except OSError as e:
+            log(st, "finalize", f".work/ の削除に失敗（{type(e).__name__}）。state は reviewed のまま")
+            save_state(run, st)
+            write_text(run, "progress.md", render_progress(st))
+            raise ToolError(f".work cleanup failed ({type(e).__name__}: {str(e)[:200]}); the run stays 'reviewed'",
+                            next=f"ファイルを使用中のプロセスを閉じてから finalize --run {st['runId']} を再実行する")
+        st["phase"] = "finalized"
+        log(st, "finalize", ".work/ を削除して完了")
+        write_text(run, "progress.md", render_progress(st))
+        try:
+            os.remove(os.path.join(real_work, "state.json"))
+            os.rmdir(real_work)
+        except OSError as e:
+            raise ToolError(f".work cleanup failed ({type(e).__name__}: {str(e)[:200]})",
+                            next=f"finalize --run {st['runId']} を再実行する（state が残っていれば再試行でき、"
+                                 "state が削除済みなら status が完了として扱う）")
     s = f["summary"]
     led = f["ledger"]
     return {"run": run.name, "reportFolder": str(run), "files": sorted(p.name for p in run.iterdir()),

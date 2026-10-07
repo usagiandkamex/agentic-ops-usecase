@@ -17,6 +17,7 @@ CLASS_STATUSES = {"confirmed", "ambiguous", "insufficientEvidence"}
 REMEDIATION_STATUSES = {"explicit", "supplementedByLearn", "notFound"}
 FLAG_NAMES = ("workloadStop", "dataLossRisk", "autoMigration")
 LEARN_VALUES = {"available", "unavailable", "notUsed"}
+FETCHED_VIA = ("MRC MCP", "ReleaseCommunicationsApi")
 
 
 class ShardError(Exception):
@@ -118,8 +119,11 @@ def validate_event(e: Any, key: str, warnings: list[str]) -> dict:
         warnings.append(f"{key}: 対応策が空のため remediationStatus を notFound にした")
         rstat = "notFound"
     dc = e.get("dateConflict")
-    if isinstance(dc, str) and dc.lower() in ("true", "false"):
-        dc = dc.lower() == "true"
+    if isinstance(dc, str) and dc.strip().lower() in ("true", "false"):
+        dc = dc.strip().lower() == "true"
+    if not isinstance(dc, bool):
+        # Feeds the report's conflict count; a missing / invalid value must not silently become false.
+        raise ShardError("dateConflict must be true/false")
     same = e.get("sameEventAs")
     if isinstance(same, dict) and isinstance(same.get("noticeId"), str) and isinstance(same.get("eventKey"), str):
         same = {"noticeId": same["noticeId"].strip(), "eventKey": same["eventKey"].strip(),
@@ -137,7 +141,7 @@ def validate_event(e: Any, key: str, warnings: list[str]) -> dict:
         "eventKey": key,
         "affectedScopeJa": clean_text(e.get("affectedScopeJa"), 300),
         "retireDate": _retire_date(e.get("retireDate"), warnings, key),
-        "dateConflict": dc is True,
+        "dateConflict": dc,
         "dateNoteJa": clean_text(e.get("dateNoteJa"), 300),
         "milestones": _milestones(e.get("milestones")),
         "impactType": _enum(e.get("impactType"), IMPACT_TYPES, "impactType"),
@@ -157,10 +161,9 @@ def validate_notice(n: Any, meta: dict, allowed: list[str], warnings: list[str])
     nid = meta["id"]
     if n.get("fetchStatus", "ok") != "ok":
         raise ShardError("fetchStatus must be ok for returned notices")
-    via = str(n.get("fetchedVia") or "")
-    via = "MRC MCP" if "mcp" in via.lower() else "ReleaseCommunicationsApi" if "api" in via.lower() else None
-    if via is None:
-        raise ShardError("fetchedVia invalid")
+    via = n.get("fetchedVia")
+    if via not in FETCHED_VIA:
+        raise ShardError("fetchedVia must be \"MRC MCP\" or \"ReleaseCommunicationsApi\"")
     events = n.get("events")
     if not isinstance(events, list) or not events:
         raise ShardError("events[] must have at least one event")
