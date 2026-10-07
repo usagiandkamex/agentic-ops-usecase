@@ -530,6 +530,39 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(self.tool("status", "--run", name)["phase"], "finalized")
         self.assertIn("finalized", (run / "progress.md").read_text(encoding="utf-8"))
 
+    def test_init_picks_next_suffix_when_folder_is_created_concurrently(self):
+        root = common.reports_root()
+        root.mkdir(parents=True, exist_ok=True)
+        base = FIXED_NOW.strftime("%Y%m%d-%H%M%S")
+        taken = [p for p in (root / base, *(root / f"{base}-{i}" for i in range(2, 50))) if p.exists()]
+        orig_mkdir, raced = Path.mkdir, []
+
+        def racing_mkdir(p, *a, **kw):
+            if p.parent == root and not raced and not p.exists():
+                orig_mkdir(p)  # another init wins the race between the name choice and mkdir
+                raced.append(p)
+                self.created.append(p)
+            return orig_mkdir(p, *a, **kw)
+
+        Path.mkdir = racing_mkdir
+        try:
+            name, run = self.init()
+        finally:
+            Path.mkdir = orig_mkdir
+        self.assertEqual(len(raced), 1)
+        self.assertNotEqual(run, raced[0])
+        self.assertNotIn(run, taken)
+        self.assertTrue((run / ".work" / "state.json").is_file())
+
+    def test_usage_errors_are_json(self):
+        for argv in (["init", "--scope", "next12Months"], ["init", "--scope", "bogus", "--mrc-mcp", "available"],
+                     ["next-wave", "--run", "x", "--max", "many"], ["no-such-command"], []):
+            out = self.tool(*argv, expect=2)
+            self.assertFalse(out["ok"])
+            self.assertTrue(out["error"])
+            self.assertIn("next", out)
+            self.assertIn("usage", out)
+
 
 class Units(unittest.TestCase):
     def test_failed_g4_routes_back_to_render(self):

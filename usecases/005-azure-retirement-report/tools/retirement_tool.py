@@ -26,8 +26,16 @@ def _scope_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--as-of", dest="as_of", help="as-of date (YYYY-MM-DD, JST). Defaults to today in JST")
 
 
+class _JsonArgumentParser(argparse.ArgumentParser):
+    """Report usage errors as ToolError (JSON, exit code 2) instead of argparse text."""
+
+    def error(self, message: str):  # type: ignore[override]
+        raise ToolError(f"{self.prog}: {message}", code=2, usage=self.format_usage().strip(),
+                        next="引数を確認して再実行する（`--help` で使い方を表示）")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="retirement_tool.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = _JsonArgumentParser(prog="retirement_tool.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", action="version", version=TOOL_VERSION)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -68,7 +76,6 @@ def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
-    args = build_parser().parse_args(argv)
     handlers = {
         "enumerate": api.cmd_enumerate, "record-same-target": plan.cmd_record_same_target,
         "plan-batches": plan.cmd_plan_batches, "next-wave": plan.cmd_next_wave, "check-shards": shards.cmd_check_shards,
@@ -76,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
         "verify": render.cmd_verify, "record-review": render.cmd_record_review, "finalize": render.cmd_finalize,
     }
     try:
+        args = build_parser().parse_args(argv)
         if args.cmd == "probe":
             out = api.cmd_probe(args)
         elif args.cmd == "init":

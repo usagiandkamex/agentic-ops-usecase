@@ -196,11 +196,14 @@ def cmd_init(args: Any) -> dict:
     root.mkdir(parents=True, exist_ok=True)
     base = now.strftime("%Y%m%d-%H%M%S")
     name, n = base, 1
-    while (root / name).exists():
-        n += 1
-        name = f"{base}-{n}"
-    run = root / name
-    run.mkdir()
+    while True:
+        run = root / name
+        try:
+            run.mkdir()  # atomic: concurrent inits in the same second pick distinct suffixes
+            break
+        except FileExistsError:
+            n += 1
+            name = f"{base}-{n}"
     st = {
         "schemaVersion": SCHEMA_VERSION, "toolVersion": TOOL_VERSION, "runId": name,
         "createdAt": jst_stamp(now), "asOfDate": as_of.isoformat(), "scope": scope,
