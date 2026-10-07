@@ -2,9 +2,9 @@
 <!--
   Azure リタイア情報レポート — index.html テンプレート（ユースケース 005・単一ページ）
   使い方:
-  - レポート生成サブエージェント(azure-retirement-report-writer)はこの HTML を read_file で読み、下記トークンを findings.json の実値に置換して create_file で生成する（HTML を自作しない・生成スクリプト不要）。
+  - 同梱ツール(tools/retirement_tool.py render)がこの HTML を読み、下記トークンを findings.json の実値に置換して生成する（エージェントは HTML を手で組み立てない・新しいスクリプトを作らない）。
   - 出力: reports/<YYYYMMDD-HHmmss>/index.html（1 ファイルのみ）。CSV は retirements.csv、データ源は findings.json。
-  - このテンプレは参照元。{{TOKEN}} 置換と BEGIN X / END X 区域の行複製だけで完成させ、create_file で 1 回書き出す（大量データはセンチネル＋編集ツールで追記してよい）。
+  - このテンプレは参照元。{{TOKEN}} 置換と BEGIN X / END X 区域の行複製を 1 回の走査で行う（差し込んだデータは再走査しない）。
   - 保持必須: CSP の meta 要素の値・style ブロック・header の crumb・footer・各テーブルの thead・SECTION: x アンカー・本文末尾のロジック用 script 要素（1 文字も変えない。CSP の sha256 ハッシュで許可しているため、改変すると JavaScript が動かなくなる）。
   - 出力に {{...}} や BEGIN / END マーカー、この先頭コメントを残さないこと。
   トークン（メタ）: META_DATETIME(JST) / AS_OF_DATE / SCOPE_LABEL / COLLECTION_METHOD / CAP_MRC_MCP / CAP_RC_API / CAP_LEARN_MCP

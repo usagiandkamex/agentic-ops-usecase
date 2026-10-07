@@ -1,0 +1,106 @@
+# 同梱ツール `retirement_tool.py`（ユースケース 005）
+
+Azure リタイア情報レポートの**決定論的な処理**（列挙・完全性照合・重複候補のグループ化・バッチ化・シャード検証・再委譲計画・統合・影響度判定・集計・HTML / CSV 描画・検証ゲート・進捗管理）を行う、レビュー済みの CLI です。
+
+- **Python 3.9 以上・標準ライブラリのみ**（`pip install` 不要）。
+- エージェントは**このツールのサブコマンドだけ**を実行する。新しいスクリプトやインラインコードを書かない・実行しない（[instructions](../../../.github/instructions/005-retirement-report.instructions.md)）。
+- LLM が担うのは判断だけ（収集範囲の承認・本文からの抽出・同一対象の判定・総評・独立レビュー）。
+
+## 使い方
+
+リポジトリのルートで実行する。各サブコマンドは JSON を 1 つ出力し、`next` に次の操作が書かれている。
+
+```text
+python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコマンド> [オプション]
+```
+
+| 手順 | サブコマンド | 内容 |
+| --- | --- | --- |
+| 2 | `probe --scope <type> [--start YYYY-MM --end YYYY-MM] [--as-of YYYY-MM-DD]` | 公開 API の可否・Retirements 総数・範囲の候補件数（ファイルを書かない） |
+| 3 | `init --scope <type> [...] --mrc-mcp available\|unavailable` | 保存先フォルダ（JST 秒精度）・`.work/state.json`・`progress.md` を作成 |
+| 4 | `enumerate --run <run>` | 列挙・件数照合・事前絞り込み・`.work/same-target-request.json` |
+| 4 | `record-same-target --run <run> --pairs "<id>,<id>;..."` / `--none` | LLM が判定した同一対象の組を記録（検証付き） |
+| 4 | `plan-batches --run <run>` | 重複候補グループ・バッチ化・ワーカー入力・`findings.json` 骨組み（G1） |
+| 5 | `next-wave --run <run> [--max 6]` | 次に起動するバッチの入力ファイルを作り `dispatch[]` を返す |
+| 5 | `check-shards --run <run>` | シャードの厳格検証・正規化・再委譲バッチの計画（全バッチ完了で G2） |
+| 6 | `merge --run <run>` | 統合・範囲の最終判定・影響度・集計を `findings.json` に書く（G3） |
+| 6 | `set-highlight --run <run> --text "..."` | 総評を記録（G3 を再実行） |
+| 7 | `render --run <run>` | `index.html` / `retirements.csv` を生成し検証ゲート 1〜8 を実行（G4） |
+| 7 | `record-review --run <run> --result pass\|fail [--note ...]` | 独立レビューの結果を記録 |
+| 8 | `finalize --run <run>` | G3・G4・レビュー合格を確認し `.work/` を削除 |
+| — | `verify --run <run>` | G3 / G4 の読み取り専用の再実行 |
+| — | `status [--run <run>]` | 現在地と次の操作（`--run` 省略で最近の実行一覧）。中断からの再開に使う |
+
+- `<type>` = `default` / `futureOnly` / `next12Months` / `all` / `custom`。`--run` は `reports/` 直下のフォルダ名（またはそのパス）。
+- 終了コード: `0` 成功 / `1` ゲート不合格 / `2` 使い方・状態のエラー（`error` と `next` を読む）/ `3` ネットワークエラー。
+
+## 状態と再開
+
+- 実行状態は `<run>/.work/state.json` に一元化し、`progress.md` は**毎回 state から生成**する（手で編集しない）。
+- 書き込みはすべて一時ファイル → 置換（原子的）。同じ実行への同時実行はロックファイル `reports/.<run>.lock`（所有トークン付き・`.gitignore` 済み）で防ぐ。
+- フェーズ: `initialized` → `enumerated` → `planned` → `collected` → `merged` → `highlighted` → `rendered` → `reviewed` → `finalized`。各サブコマンドは許可されたフェーズでのみ動き、それ以外は `status` に従うよう案内する。
+- ワーカー起動中に中断した場合は `check-shards` を実行する（書かれなかったシャードは失敗扱いになり、再委譲が計画される）。
+
+## 収集範囲
+
+`windowStart` / `windowEnd` は JST 暦日・両端含む（`null` は無制限）。事前絞り込みの起点年 `Y` = `windowStart` の 6 か月前の年。
+
+| type | windowStart | windowEnd |
+| --- | --- | --- |
+| `default` | 基準日の月の 1 日から 3 か月前の月の 1 日 | `null` |
+| `futureOnly` | 基準日 | `null` |
+| `next12Months` | 基準日 | 基準日の 12 か月後の前日 |
+| `all` | `null` | `null` |
+| `custom` | 指定開始月の 1 日 | 指定終了月の末日 |
+
+イベントの範囲判定は区間の重なり（`retireDate` の `[start, end]` と `[windowStart, windowEnd]`）。日付不明のイベントは常に範囲内（要確認）。
+
+## 列挙と事前絞り込み（`enumerate`・G1）
+
+- 範囲内候補 = `tags/any(t:t eq 'Retirements') and (availabilities/any(a:a/year ge Y) or not availabilities/any())`、補集合 = `... and availabilities/any() and not availabilities/any(a:a/year ge Y)`。`inScopeCount + complementCount = retirementsTotal`、一意 ID 件数 = `inScopeCount`、列挙前後の総数一致を確認し、不一致なら 1 回再列挙、なお不一致なら `consistent=false` として記録して続行する（レポートの「収集の完全性」に表示）。
+- **本文の年による候補補完**: 補集合のタイトル・本文に `Y` 以上の西暦 4 桁（`20xx`）を含む投稿を候補に加える（availability と本文のリタイア日のずれによる取りこぼし防止）。補集合は必ず availability を持ち、ワーカーが根拠にできる日付は本文の西暦・availability の年月だけなので、除外した投稿のリタイア日は最も遅くても `Y` 年 1 月 1 日（< `windowStart`）。
+- `ledger.prefilter` の等式（`M` = 補完件数、`C` = 候補件数）:
+  - `done`: `screenedCount` = `complementCount`、`excludedCount` = `complementCount` − `M`、`C` = 範囲内候補の一意件数 + `M`
+  - `notNeeded`（`all`）: 補集合・補完・除外がすべて 0、`C` = 範囲内候補の一意件数
+  - `fallbackAll`（補集合の取得件数が合わない）: `M` = 0・`excludedCount` = 0、補集合の全件を候補にする
+
+## 重複候補とバッチ（`record-same-target` / `plan-batches`）
+
+- 重複候補グループ = 正規化タイトル（小文字化・先頭の `Retirement:` / `Retirement notice:` / `Action required:` / `Action recommended:` / `Reminder:` / `Update:` を除去・英数字以外を空白）の一致 ＋ LLM が記録した同一対象の組、の連結成分。アンカー = `modified` が最も新しい投稿。グループは**バッチ割当のヒント**で、統合はしない。
+- 1 バッチの本文取得は最大 8 件（参照投稿を含む）。8 件以下のグループは同じバッチに入れる。8 件超のグループは、アンカー＋最新 7 件を所有バッチに、残りを 7 件ずつのチャンクにし、チャンクのバッチは所有バッチの確認後に**アンカーを参照投稿として**起動する（アンカーが取得失敗なら、返却済みで最新のメンバーに差し替える）。
+- `record-same-target` は候補外の ID・自己参照・製品が共通しない組を拒否する。`plan-batches` は記録が無いと拒否する（手順の飛ばし防止）。
+
+## シャード検証と再委譲（`check-shards`・G2）
+
+- マニフェスト（`expectedNoticeIds` = 割当、`returnedNoticeIds ∪ failedNoticeIds` = 割当・重複なし、`notices[].id` = 返却）が崩れたシャードは、割当の全投稿を失敗にする。投稿ごとの列挙値の誤り・必須キーの欠落はその投稿だけ失敗にする。
+- 無害な正規化: 月精度の `start` / `end` を月初・月末に、日精度の `end` を `start` に揃える、真偽値を `"true"` / `"false"` 文字列に、対応策が空なら `notFound` に。
+- サニタイズ: 制御文字の除去・長さ上限、メールアドレス / SafeLinks の伏字化、許可リスト外のリンクの除去（SafeLinks は実 URL に復号して再判定）。
+- `sameEventAs` は、参照先が実在し（同じシャード内のイベントか、渡した参照投稿のイベント）、**同じ重複候補グループ**に属し、**根拠（`evidence`）が空でない**場合だけ残す。満たさなければ統合候補から外し、警告として記録する（無関係な投稿の誤統合を防ぐ）。
+- 失敗した投稿**だけ**を再委譲バッチ `B<NN>-r<n>`（シャード `batch-<NN>-r<n>.json`・既存シャードは上書きしない）にまとめる。試行は**投稿ごとに最大 3 回**。3 回失敗した投稿は `ledger.failedNoticeIds`（`retriesExhausted`）になり、処理は続行する。
+- 受理した抽出結果は `.work/accepted.json`（投稿ごとに唯一の有効結果）に保存する。
+
+## 統合規則（`merge`・G3）
+
+- ワーカーの `sameEventAs`（本文の明記による証拠付き）で結ばれたイベントを推移的に 1 つに統合する（バッチをまたぐ参照投稿経由を含む）。証拠の無い重複候補は統合せず `relatedNoticeIds` に入れる。
+- 代表 = `modified` が最も新しい投稿（同時刻は ID が大きい方）。`eventId` = 代表の投稿 ID（分割イベントは `<id>-<n>`。それが別の投稿 ID と衝突する場合は `<id>~<n>`）。
+- `retireDate` / `dateConflict` / `dateNoteJa`: 本文に明記（`source=description`）のメンバーのうち最も新しい投稿の値。採用しなかった日付は `dateNoteJa` に「旧告知: <日付>」。
+- `flags`: いずれかが `"true"` → `"true"`、それ以外でいずれかが `"false"` → `"false"`、すべて `"unknown"` → `"unknown"`。`"true"` と `"false"` が衝突したら `classificationStatus=ambiguous`。
+- `classificationStatus`: 代表の値（代表が `insufficientEvidence` で他に判定済みがあればその値）。要約・対応策・移行先・影響種別は代表の値、空なら値を持つ最も新しいメンバーの値。マイルストーン・リンクは和集合。
+- 範囲外のイベントは `ledger.outOfScopeAfterExtraction` へ。範囲内イベントを持たない投稿（取得失敗を含む）は `notices[]` から除く。
+- 影響度・`summary` / `byCategory`（大文字小文字を区別しない序数比較・`Uncategorized` は末尾）/ `byQuarter`（時系列・`日付不明` は末尾）は [report-template/README.md](../report-template/README.md) のルールで算出する。
+
+## 安全性
+
+- **ネットワーク**: `https://www.microsoft.com/releasecommunications/api/v2/azure` への GET だけ（オリジン固定・リダイレクトを辿らない・タイムアウト・応答サイズ上限・JSON 以外は拒否）。取得データ中の URL には一切アクセスしない。
+- **ファイル**: 書き込みは `usecases/005-azure-retirement-report/reports/<run>/` 配下のみ（フォルダ名の形式・リンク / ジャンクションを検査）。`.work/` の削除は `finalize` だけが行う。
+- **取得データ**: タイトル・本文・ワーカーの抽出結果はすべて外部データとして扱い、描画は単一パスの置換（差し込んだデータを再走査しない）とシンク別エスケープで行う。
+- Azure リソース・サブスクリプションへはアクセスしない。
+
+## 開発・テスト
+
+```text
+python -m unittest discover -s usecases/005-azure-retirement-report/tools/tests -v
+```
+
+- テストは合成データのみを使い、ネットワークを使わない（公開 API をフェイクに差し替える）。テスト用の実行フォルダは `reports/` 配下に作って終了時に削除する。
+- テンプレート（`index.html`）のロジック用 `<script>` を変更したら、CSP の `sha256-…` を更新する（検証ゲート 4c が不一致を検出する）。

@@ -20,10 +20,10 @@ HTML 上で **カテゴリ（Compute / Databases 等）・製品（リソース�
 ## 前提条件
 
 - **Azure の権限・認証は不要**（Azure リソース・サブスクリプションへはアクセスしない）。
-- **Microsoft Release Communications（MRC）MCP サーバ**（推奨・認証不要）。[.vscode/mcp.json](../../.vscode/mcp.json) に `Microsoft Release Communications` として定義済み。利用できない場合は Azure Updates と同一データ源の公開 API（`https://www.microsoft.com/releasecommunications/api/v2/azure`）へフォールバックする。
+- **Microsoft Release Communications（MRC）MCP サーバ**（推奨・認証不要）。[.vscode/mcp.json](../../.vscode/mcp.json) に `Microsoft Release Communications` として定義済み。ワーカーが本文の取得に使う（利用できない場合は Azure Updates と同一データ源の公開 API `https://www.microsoft.com/releasecommunications/api/v2/azure` から取得する）。
 - **Microsoft Learn MCP サーバ**（任意・認証不要）。対応策の補完に使う。[.vscode/mcp.json](../../.vscode/mcp.json) に `Microsoft Learn` として定義済み（無くても動作する）。
-- インターネット（`www.microsoft.com` / `learn.microsoft.com`）への HTTPS 接続。
-- VS Code + GitHub Copilot 拡張機能、PowerShell 7 以降（CSV の BOM 付与・検証に使用）。
+- インターネット（`www.microsoft.com` / `learn.microsoft.com`）への HTTPS 接続。列挙・件数照合には公開 API への接続が必須。
+- VS Code + GitHub Copilot 拡張機能、**Python 3.9 以降**（同梱ツール [`tools/retirement_tool.py`](tools/README.md) の実行に使用・標準ライブラリのみで追加パッケージ不要）。
 
 > 本ユースケースは **公開情報の READ のみ** です。Azure への照会・変更、外部への書き込みは行いません。
 
@@ -33,31 +33,33 @@ HTML 上で **カテゴリ（Compute / Databases 等）・製品（リソース�
 
 | 種別 | ファイル | VS Code での呼び出し | 役割 |
 | --- | --- | --- | --- |
-| エージェント（オーケストレーター） | [.github/agents/005-azure-retirement-analyst.agent.md](../../.github/agents/005-azure-retirement-analyst.agent.md) | エージェント選択 `azure-retirement-analyst` | 収集範囲の確認・承認、列挙と完全性照合、ワーカーの並列実行、統合と影響度判定、レポート生成の委譲 |
+| エージェント（オーケストレーター） | [.github/agents/005-azure-retirement-analyst.agent.md](../../.github/agents/005-azure-retirement-analyst.agent.md) | エージェント選択 `azure-retirement-analyst` | 収集範囲の確認・承認、同一対象の判定、ワーカーの並列実行、総評、レビュー結果の記録（決定論処理は同梱ツールで実行） |
 | サブエージェント（並列ワーカー） | [.github/agents/005-retirement-summarizer.agent.md](../../.github/agents/005-retirement-summarizer.agent.md) | 自動（オーケストレーターから） | 最大 8 件のバッチ単位で本文を取得し、日付・影響フラグ・対応策・リンクを抽出 |
-| サブエージェント（レポート生成） | [.github/agents/005-retirement-report-writer.agent.md](../../.github/agents/005-retirement-report-writer.agent.md) | 自動（オーケストレーターから） | テンプレートから HTML / CSV を生成し、検証ゲートと独立レビューを実施 |
-| インストラクション | [.github/instructions/005-retirement-report.instructions.md](../../.github/instructions/005-retirement-report.instructions.md) | 自動適用 | 公開情報のみ・生成スクリプト禁止・判定の原則などの共通ルール |
+| サブエージェント（レポート生成） | [.github/agents/005-retirement-report-writer.agent.md](../../.github/agents/005-retirement-report-writer.agent.md) | 自動（オーケストレーターから） | 同梱ツールで HTML / CSV を生成・検証し、独立レビューを実施 |
+| 同梱ツール | [tools/retirement_tool.py](tools/README.md) | エージェントが実行 | 列挙・完全性照合・バッチ化・シャード検証・統合・影響度判定・集計・描画・検証ゲート・進捗管理（決定論・再開可能） |
+| インストラクション | [.github/instructions/005-retirement-report.instructions.md](../../.github/instructions/005-retirement-report.instructions.md) | 自動適用 | 公開情報のみ・同梱ツール以外のスクリプト禁止・判定の原則などの共通ルール |
 | プロンプト | [.github/prompts/005-retirement-report.prompt.md](../../.github/prompts/005-retirement-report.prompt.md) | `/azure-retirement-report` | レポート作成を実行 |
 
 ## 手順
 
 VS Code の GitHub Copilot Chat で、エージェント **`azure-retirement-analyst`** を選択（または `/azure-retirement-report` を実行）する。
-エージェントは次の手順 1 → 8 を進める。**手順 2 の最終承認までファイルを書かず、収集も開始しない**。承認後はエラーが無い限り自律的に完走する。
+エージェントは次の手順 1 → 8 を進める。**手順 2 の最終承認までファイルを書かず、収集も開始しない**。承認後はエラーが無い限り自律的に完走する（件数が多くても止まらない）。
+決定論的な処理は同梱ツール [`tools/retirement_tool.py`](tools/README.md) のサブコマンドで行い、エージェントは判断（範囲の承認・本文の抽出・同一対象の判定・総評・レビュー）だけを担う。中断した場合は `status` で現在地と次の操作を確認して再開できる。
 
-| 手順 | 内容 | 担当 | アウトプット |
+| 手順 | 内容 | 担当（サブコマンド） | アウトプット |
 | --- | --- | --- | --- |
 | 1. 収集範囲の確認 | 選択肢で確認（既定: 今後予定のすべて＋直近 3 か月にリタイア済み／今後のみ／今後 12 か月／全件／カスタム） | オーケストレーター | 収集範囲・基準日（JST） |
-| 2. 収集能力の判別・承認 | MRC MCP / 公開 API の可否を判別し、内容を提示して最終承認 | オーケストレーター | 実行承認 |
-| 3. 保存先・進捗 | `reports/<YYYYMMDD-HHmmss>/` と `progress.md` を作成 | オーケストレーター | `progress.md` |
-| 4. 列挙 | Retirements タグを全件数・年フィルタ・補集合で照合しながら列挙し、補集合は本文の年で候補を補完（取りこぼし防止）。重複候補をグループ化してバッチ化 | オーケストレーター | `findings.json`（投稿・台帳） |
-| 5. 詳細取得・要約 | バッチごとに並列で本文を取得し、日付・影響フラグ・対応策を抽出（失敗分のみ再委譲） | 並列ワーカー | `.work/batch-<NN>.json` |
-| 6. 統合・影響度判定 | 同一イベントの統合・範囲の最終判定・決定論ルールで影響度を算出し、検証コマンドで再計算して一致を確認 | オーケストレーター | `findings.json`（確定） |
-| 7. レポート生成 | テンプレートを置換して HTML / CSV を生成し、検証ゲートと独立レビュー | レポート生成 | `index.html` / `retirements.csv` |
-| 8. 完了報告 | `.work/` を削除し、要点を提示 | オーケストレーター | レポートフォルダ＋要約 |
+| 2. 収集能力の判別・承認 | MRC MCP / 公開 API の可否と候補件数を確認し、内容を提示して最終承認 | オーケストレーター（`probe`） | 実行承認 |
+| 3. 保存先・進捗 | `reports/<YYYYMMDD-HHmmss>/` と `progress.md` を作成 | ツール（`init`） | `progress.md` |
+| 4. 列挙・バッチ化 | Retirements タグを全件数・年フィルタ・補集合で照合しながら列挙し、補集合は本文の年で候補を補完（取りこぼし防止）。エージェントが同一対象の組を判定し、重複候補をグループ化してバッチ化 | ツール（`enumerate` / `plan-batches`）＋オーケストレーター（`record-same-target`） | `findings.json`（骨組み） |
+| 5. 詳細取得・要約 | バッチごとに並列で本文を取得し、日付・影響フラグ・対応策を抽出。ツールが厳格に検証し、失敗分のみ再委譲 | 並列ワーカー＋ツール（`next-wave` / `check-shards`） | `.work/batch-<NN>.json` |
+| 6. 統合・影響度判定 | 同一イベントの統合・範囲の最終判定・決定論ルールで影響度を算出して再計算で検証。総評はエージェントが執筆 | ツール（`merge`）＋オーケストレーター（`set-highlight`） | `findings.json`（確定） |
+| 7. レポート生成 | テンプレートから HTML / CSV を生成して検証ゲートを実行し、独立レビュー | レポート生成（`render`）＋オーケストレーター（`record-review`） | `index.html` / `retirements.csv` |
+| 8. 完了報告 | ゲートとレビューの合格を確認して `.work/` を削除し、要点を提示 | ツール（`finalize`）＋オーケストレーター | レポートフォルダ＋要約 |
 
 ## 影響度の判定ルール
 
-影響度 = **重大度 S × 緊急度 U**。ワーカーは本文の明記からフラグ（`true` / `false` / `unknown`）と根拠を抽出し、オーケストレーターが機械的に算出します。
+影響度 = **重大度 S × 緊急度 U**。ワーカーは本文の明記からフラグ（`true` / `false` / `unknown`）と根拠を抽出し、同梱ツールが機械的に算出します。
 
 - **S3（重大）**: リタイア後に停止・利用不可、またはデータ / リソースの削除・消失が明記されている
 - **S1（軽微）**: Microsoft による自動移行が明記され、停止・消失の明記が無い
