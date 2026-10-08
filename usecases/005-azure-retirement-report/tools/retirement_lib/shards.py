@@ -302,27 +302,57 @@ def validate_notice(n: Any, meta: dict, allowed: list[str], warnings: list[str],
             "events": [validate_event(e, k, warnings) for e, k in zip(events, keys)]}
 
 
-def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tuple[dict, dict, list[str], str | None]:
-    """Returns (ok records by id, failures by id -> reason, warnings, learnMcp)."""
+def _learn_incomplete(sh: dict, learn: str, api_mode: bool, warnings: list[str]) -> bool:
+    """Whether some event that needed a Learn supplement was not served by Learn MCP (GET fallback or nothing).
+
+    learnMcp is one value per batch (MCP use takes precedence), so a batch that used Learn MCP for one event and
+    fell back for another reports "available"; the manifest flag learnIncomplete carries that mix.
+    """
+    if api_mode or learn == "notUsed":
+        # Offline workers never supplement; "notUsed" means no event needed a supplement.
+        if not api_mode and _tri_bool(sh.get("learnIncomplete")) is True:
+            warnings.append("learnMcp=notUsed なのに learnIncomplete=true のため false とした")
+        return False
+    if learn in LEARN_PARTIAL:
+        return True
+    flag = _tri_bool(sh.get("learnIncomplete"))
+    if flag is None:
+        # Missing / invalid on a Learn-MCP batch: assume partial rather than report a complete supplement.
+        warnings.append("learnIncomplete が無い・不正のため true（一部補完）とみなした")
+        return True
+    return flag
+
+
+def _tri_bool(v: Any) -> bool | None:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str) and v.strip().lower() in ("true", "false"):
+        return v.strip().lower() == "true"
+    return None
+
+
+def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict
+                ) -> tuple[dict, dict, list[str], str | None, bool | None]:
+    """Returns (ok records by id, failures by id -> reason, warnings, learnMcp, learnIncomplete)."""
     assigned = list(b["noticeIds"])
     path = run / b["shardPath"]
     warnings: list[str] = []
     if not path.exists():
-        return {}, {i: "shardMissing" for i in assigned}, warnings, None
+        return {}, {i: "shardMissing" for i in assigned}, warnings, None, None
     mrc = st.get("capabilities", {}).get("mrcMcp")
     api_mode = mrc == "不可"
     pf = b.get("prefetchFailedNoticeIds")
     if (mrc not in ("利用可", "不可") or b.get("bodySource") != ("ReleaseCommunicationsApi" if api_mode else "MRC MCP")
             or not isinstance(pf, list) or not all(isinstance(x, str) and x in assigned for x in pf)
             or len(set(pf)) != len(pf) or (pf and not api_mode)):
-        return {}, {i: "malformedInput: dispatch provenance missing or inconsistent (redispatch)" for i in assigned}, warnings, None
+        return {}, {i: "malformedInput: dispatch provenance missing or inconsistent (redispatch)" for i in assigned}, warnings, None, None
     prefetch_failed = set(pf)
     bodies: dict = {}
     if api_mode:
         try:
             bodies = _prefetched_bodies(run, b)
         except ShardError as ex:
-            return {}, {i: f"malformedInput: {ex} (redispatch)" for i in assigned}, warnings, None
+            return {}, {i: f"malformedInput: {ex} (redispatch)" for i in assigned}, warnings, None, None
     try:
         sh = read_json(path)
         if not isinstance(sh, dict):
@@ -360,8 +390,9 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
             # The offline worker profile has no network (no Learn MCP, no GET); any other claim is not trusted.
             warnings.append(f"learnMcp={learn} は MRC MCP 不可の実行（オフラインワーカー）では使えないため notUsed とした")
             learn = "notUsed"
+        incomplete = _learn_incomplete(sh, learn, api_mode, warnings)
     except (ShardError, ValueError, OSError) as ex:
-        return {}, {i: f"malformedShard: {str(ex)[:120]}" for i in assigned}, warnings, None
+        return {}, {i: f"malformedShard: {str(ex)[:120]}" for i in assigned}, warnings, None, None
     ok: dict = {}
     failures: dict = {}
     for f in fail:
@@ -408,7 +439,7 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
             if why:
                 warnings.append(f"{e['eventKey']}: sameEventAs の{why}ため統合候補から外した")
                 e["sameEventAs"] = None
-    return ok, failures, warnings, learn
+    return ok, failures, warnings, learn, incomplete
 
 
 def plan_retries(st: dict, by_id: dict, ids: list[str]) -> list[str]:
@@ -459,7 +490,7 @@ def cmd_check_shards(args: Any, run: Path) -> dict:
         report = []
         retry_ids: list[str] = []
         for b in [x for x in st["batches"] if x["status"] == "dispatched"]:
-            ok, failures, warnings, learn = check_batch(run, st, b, meta, accepted)
+            ok, failures, warnings, learn, incomplete = check_batch(run, st, b, meta, accepted)
             for nid, rec in ok.items():
                 accepted[nid] = rec
                 st["noticeStatus"][nid].update({"status": "ok", "reason": None})
@@ -473,6 +504,7 @@ def cmd_check_shards(args: Any, run: Path) -> dict:
                     retry_ids.append(nid)
             b["status"] = "done" if not failures else ("failed" if not ok else "partial")
             b["learnMcp"] = learn
+            b["learnIncomplete"] = incomplete
             b["warnings"] = warnings[:50]
             report.append({"batchId": b["batchId"], "status": b["status"], "returned": len(ok),
                            "failed": {k: v for k, v in failures.items()}, "warnings": len(warnings)})
@@ -492,9 +524,12 @@ def cmd_check_shards(args: Any, run: Path) -> dict:
             g2 = len(okc) + len(ex) == len(cand)
             # Only batches whose records were finally accepted decide the run's Learn provenance (not superseded attempts).
             effective = {accepted[i]["batchId"] for i in okc if i in accepted}
-            learns = [b["learnMcp"] for b in st["batches"] if b["batchId"] in effective and b["learnMcp"]]
+            eff_batches = [b for b in st["batches"] if b["batchId"] in effective and b["learnMcp"]]
+            learns = [b["learnMcp"] for b in eff_batches]
             st["capabilities"]["learnMcp"] = learn_capability(learns)
-            st["learnSupplementIncomplete"] = any(x in LEARN_PARTIAL for x in learns)
+            # A batch can mix Learn MCP and the GET fallback while reporting "available"; its flag is OR-ed in.
+            st["learnSupplementIncomplete"] = any(x in LEARN_PARTIAL for x in learns) or any(
+                b.get("learnIncomplete") for b in eff_batches)
             st["gates"]["G2"] = {"status": "pass" if g2 else "fail", "returned": len(okc), "failed": ex}
             if g2:
                 st["phase"] = "collected"

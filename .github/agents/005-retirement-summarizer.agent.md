@@ -46,7 +46,8 @@ user-invocable: false
    - **Learn MCP（優先）**: `microsoft_docs_search` で `"<製品> <対象> retirement migration"` 等を検索し、必要な場合だけ `microsoft_docs_fetch` で候補ページの本文を読む。**同じ製品・同じ対象のリタイア / 移行を明記した Learn ページ**に限り最大 2 件を `referenceLinks`（`source=LearnSearch`・`learnQuery` 付き）に追加する。手順をそのページの記載から要約した場合のみ `remediationStatus=supplementedByLearn`。
    - **直接 GET（フォールバック）**: Learn MCP のツールが無い、または呼び出しが 2 回連続で失敗した場合だけ、Learn 検索 API `https://learn.microsoft.com/api/search?search=<URL エンコードした検索語>&locale=en-us&$top=5` を GET する。**1 回ずつ順に（並行しない）・1 イベントにつき 1 回・1 バッチで合計 2 回**まで（並列ワーカー全体の同時リクエストを抑えるため。再試行も回数に含める）。応答の `results[].title` / `description` / `url` だけで判断し、**`https://learn.microsoft.com/` のページで、同じ製品・同じ対象のリタイア / 移行を明記した結果**に限り最大 2 件を `referenceLinks`（`source=LearnSearch`・`learnQuery` 付き）に追加する。**ページ本文の GET はしない**ので、`remediationStatus` は変えない（手順を創作しない）。**429（`Too Many Requests`）やエラーを受けたら再試行せず、そのバッチでは以後 Learn の GET をしない**。
    - マニフェストの `learnMcp`: Learn MCP を 1 回以上使えた → `available`／Learn MCP が使えず、直接 GET で応答を 1 回以上得た → `fallbackGet`／補完が必要なイベントがあったが Learn MCP も直接 GET も使えなかった → `unavailable`／補完が必要なイベントが無かった → `notUsed`。
-5. **シャードの書き出し**: 下記「シャード形式」で `create_file` する。書き出し後に `read_file` で読み直し、JSON として正しいこと（末尾カンマ・未エスケープの `"` が無い）、`expectedNoticeIds` = `returnedNoticeIds` ∪ `failedNoticeIds.id`、`sameEventAs` の参照先がシャード内に実在するか、渡された参照投稿の `events[].eventKey` のいずれかであることを確認する。親が同梱ツール（`check-shards`）で厳格に検証し、次の投稿は失敗として再委譲される: マニフェストの `learnMcp` が `"available"` / `"fallbackGet"` / `"unavailable"` / `"notUsed"` のいずれでもない・欠落（シャード全体）、列挙値の誤り・必須キーの欠落、`fetchedVia` が `"MRC MCP"` / `"ReleaseCommunicationsApi"` に完全一致しない、`dateConflict` が真偽値（または `"true"` / `"false"`）でない・欠落。次は警告付きで弱められる: 根拠（`flagEvidence`）が空の `"true"` / `"false"` フラグは `"unknown"` に、出典（`retireDate.source` が `description` / `availability`）または根拠（`retireDate.evidence`）の無い既知のリタイア日は `precision="unknown"` に、参照先が存在しない・同じ重複候補グループに無い・根拠（`evidence`）が空の `sameEventAs` は統合候補から外す（参照先が同じシャード内で失敗した投稿なら、その投稿の再委譲後に統合を判断するため残す）。`source=LearnSearch` のリンクは `learn.microsoft.com` 以外のホストなら除外される。`learnMcp` が `"available"` / `"fallbackGet"` でないシャードの Learn 補完リンクと `supplementedByLearn` は除外され、`"fallbackGet"` のシャードはリンクだけが残り `supplementedByLearn` は `notFound` に戻される（Learn MCP を使ったら `learnMcp="available"`、直接 GET のフォールバックで補完したら `"fallbackGet"` と正しく返す）。
+   - マニフェストの `learnIncomplete`（真偽値・必須）: 補完が必要なイベントのうち、**Learn MCP で処理できなかったもの（直接 GET にフォールバックした・補完できなかった）が 1 件でもあれば `true`**、すべて Learn MCP で処理できた（または補完が必要なイベントが無かった）なら `false`。`learnMcp` はバッチで 1 つの値（Learn MCP の使用が優先）なので、たとえば 1 件目は Learn MCP で補完でき、途中から Learn MCP が失敗して直接 GET にフォールバックした場合は `learnMcp=available`・`learnIncomplete=true` とする（フォールバックしたイベントは、Learn MCP 不可時と同じくリンクの追加だけにする）。
+5. **シャードの書き出し**: 下記「シャード形式」で `create_file` する。書き出し後に `read_file` で読み直し、JSON として正しいこと（末尾カンマ・未エスケープの `"` が無い）、`expectedNoticeIds` = `returnedNoticeIds` ∪ `failedNoticeIds.id`、`sameEventAs` の参照先がシャード内に実在するか、渡された参照投稿の `events[].eventKey` のいずれかであることを確認する。親が同梱ツール（`check-shards`）で厳格に検証し、次の投稿は失敗として再委譲される: マニフェストの `learnMcp` が `"available"` / `"fallbackGet"` / `"unavailable"` / `"notUsed"` のいずれでもない・欠落（シャード全体）、列挙値の誤り・必須キーの欠落、`fetchedVia` が `"MRC MCP"` / `"ReleaseCommunicationsApi"` に完全一致しない、`dateConflict` が真偽値（または `"true"` / `"false"`）でない・欠落。次は警告付きで弱められる: 根拠（`flagEvidence`）が空の `"true"` / `"false"` フラグは `"unknown"` に、出典（`retireDate.source` が `description` / `availability`）または根拠（`retireDate.evidence`）の無い既知のリタイア日は `precision="unknown"` に、参照先が存在しない・同じ重複候補グループに無い・根拠（`evidence`）が空の `sameEventAs` は統合候補から外す（参照先が同じシャード内で失敗した投稿なら、その投稿の再委譲後に統合を判断するため残す）。`source=LearnSearch` のリンクは `learn.microsoft.com` 以外のホストなら除外される。`learnMcp` が `"available"` / `"fallbackGet"` でないシャードの Learn 補完リンクと `supplementedByLearn` は除外され、`"fallbackGet"` のシャードはリンクだけが残り `supplementedByLearn` は `notFound` に戻される（Learn MCP を使ったら `learnMcp="available"`、直接 GET のフォールバックで補完したら `"fallbackGet"` と正しく返す）。`learnMcp="available"` のシャードで `learnIncomplete` が欠落・真偽値でない場合は、警告付きで `true`（一部補完）とみなされる。
 6. **マニフェストを返す**（下記）。
 
 ## 判断基準
@@ -125,6 +126,7 @@ user-invocable: false
   "attempt": 1,
   "asOfDate": "YYYY-MM-DD",
   "learnMcp": "available|fallbackGet|unavailable|notUsed",
+  "learnIncomplete": false,
   "expectedNoticeIds": ["<id>"],
   "returnedNoticeIds": ["<id>"],
   "failedNoticeIds": [ { "id": "<id>", "reason": "fetchFailed: <短い理由>" } ],
@@ -168,5 +170,5 @@ user-invocable: false
 ## 返却（マニフェスト・本文は返さない）
 
 ```json
-{ "batchId": "B03", "attempt": 1, "shardPath": "<絶対パス>", "expectedNoticeIds": [], "returnedNoticeIds": [], "failedNoticeIds": [], "learnMcp": "available|fallbackGet|unavailable|notUsed", "eventCount": 0, "notes": "" }
+{ "batchId": "B03", "attempt": 1, "shardPath": "<絶対パス>", "expectedNoticeIds": [], "returnedNoticeIds": [], "failedNoticeIds": [], "learnMcp": "available|fallbackGet|unavailable|notUsed", "learnIncomplete": false, "eventCount": 0, "notes": "" }
 ```

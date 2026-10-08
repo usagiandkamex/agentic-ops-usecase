@@ -155,7 +155,7 @@ class Pipeline(unittest.TestCase):
         self.created.append(run)
         return out["run"], run
 
-    def simulate(self, run, spec, learn="notUsed"):
+    def simulate(self, run, spec, learn="notUsed", incomplete=False):
         """spec(nid, attempt, inp) -> notice dict | None (fetch failure) | 'raw' (to write raw shard text)."""
         st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
         for b in st["batches"]:
@@ -173,15 +173,16 @@ class Pipeline(unittest.TestCase):
                     notices.append(n)
             shard = {"batchId": b["batchId"], "attempt": inp["attempt"], "asOfDate": inp["asOfDate"],
                      "learnMcp": learn(b["batchId"]) if callable(learn) else learn,
+                     "learnIncomplete": incomplete(b["batchId"]) if callable(incomplete) else incomplete,
                      "expectedNoticeIds": ids, "returnedNoticeIds": ret, "failedNoticeIds": fail, "notices": notices}
             Path(inp["shardPath"]).write_text(json.dumps(shard, ensure_ascii=False), encoding="utf-8")
 
-    def drive(self, run_name, run, spec, max_waves=20, learn="notUsed"):
+    def drive(self, run_name, run, spec, max_waves=20, learn="notUsed", incomplete=False):
         for _ in range(max_waves):
             w = self.tool("next-wave", "--run", run_name)
             if not w["dispatch"]:
                 break
-            self.simulate(run, spec, learn=learn)
+            self.simulate(run, spec, learn=learn, incomplete=incomplete)
             c = self.tool("check-shards", "--run", run_name)
             if c.get("G2"):
                 return c
@@ -472,11 +473,11 @@ class Pipeline(unittest.TestCase):
             for pf in ([["a"]], ["zz"], ["a", "a"], None, "a"):
                 b = {"batchId": "B01", "noticeIds": ids, "shardPath": ".work/s.json", "bodySource": "ReleaseCommunicationsApi",
                      "prefetchFailedNoticeIds": pf}
-                ok, fail, _, _ = shards.check_batch(tmp, st, b, meta, {})
+                ok, fail, _, _, _ = shards.check_batch(tmp, st, b, meta, {})
                 self.assertEqual(ok, {})
                 self.assertTrue(all(v.startswith("malformedInput") for v in fail.values()), pf)
             b = {"batchId": "B01", "noticeIds": ids, "shardPath": ".work/s.json", "bodySource": "MRC MCP", "prefetchFailedNoticeIds": ["a"]}
-            ok, fail, _, _ = shards.check_batch(tmp, dict(st, capabilities={"mrcMcp": "利用可"}), b, meta, {})
+            ok, fail, _, _, _ = shards.check_batch(tmp, dict(st, capabilities={"mrcMcp": "利用可"}), b, meta, {})
             self.assertTrue(all(v.startswith("malformedInput") for v in fail.values()))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -711,6 +712,48 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(plan["status"], "downgraded")
         self.assertIn("補完不可", plan["evidence"]["note"])
 
+    def test_mcp_and_fallback_mixed_in_one_batch_downgrades(self):
+        # One batch used Learn MCP for one event and fell back to GET for another: learnMcp stays "available"
+        # (MCP-derived remediation is kept) while learnIncomplete reports the partial supplement.
+        name, run = self._plan_all()
+        first: list[str] = []
+
+        def incomplete(batch_id):
+            if not first:
+                first.append(batch_id)
+            return batch_id == first[0]
+
+        def spec(nid, attempt, inp):
+            e = ev(nid, "2027-01-01", links=[{"titleJa": "Learn", "url": "https://learn.microsoft.com/azure/bar",
+                                              "source": "LearnSearch", "learnQuery": "q"}])
+            e["remediationStatus"] = "supplementedByLearn"
+            return {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP", "titleJa": "x", "events": [e]}
+        c = self.drive(name, run, spec, learn="available", incomplete=incomplete)
+        self.assertEqual(c["G2"]["status"], "pass")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(b["learnMcp"] == "available" for b in st["batches"]))
+        self.assertEqual(sum(1 for b in st["batches"] if b["learnIncomplete"]), 1)
+        self.assertEqual(st["capabilities"]["learnMcp"], "利用可")
+        self.assertTrue(st["learnSupplementIncomplete"])
+        self.tool("merge", "--run", name)
+        f = json.loads((run / "findings.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(x["remediationStatus"] == "supplementedByLearn" for x in f["events"]))
+        plan = next(p for p in f["collectionPlan"] if p["task"] == "Remediation:learnSupplement")
+        self.assertEqual(plan["status"], "downgraded")
+
+    def test_complete_learn_mcp_run_is_done(self):
+        name, run = self._plan_all()
+        c = self.drive(name, run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP",
+                                                              "titleJa": "x", "events": [ev(nid, "2027-01-01")]},
+                       learn="available", incomplete=False)
+        self.assertEqual(c["G2"]["status"], "pass")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertFalse(st["learnSupplementIncomplete"])
+        self.tool("merge", "--run", name)
+        f = json.loads((run / "findings.json").read_text(encoding="utf-8"))
+        plan = next(p for p in f["collectionPlan"] if p["task"] == "Remediation:learnSupplement")
+        self.assertEqual(plan["status"], "done")
+
     def test_api_mode_forces_learn_fallback_to_not_used(self):
         name, run, w, d = self._api_wave()
 
@@ -892,7 +935,7 @@ class ReviewRegressions(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def shard(self, obj):
-        obj = {"learnMcp": "notUsed", **obj}
+        obj = {"learnMcp": "notUsed", "learnIncomplete": False, **obj}
         (self.tmp / ".work" / "batch-01.json").write_text(json.dumps(obj), encoding="utf-8")
         return shards.check_batch(self.tmp, self.st, self.b, self.meta, {})
 
@@ -901,7 +944,7 @@ class ReviewRegressions(unittest.TestCase):
         base = {"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids, "failedNoticeIds": [],
                 "notices": [self.n(i) for i in ids]}
         for bad in (None, "", "yes", "Available"):
-            ok, fail, _, _ = self.shard(dict(base, learnMcp=bad))
+            ok, fail, _, _, _ = self.shard(dict(base, learnMcp=bad))
             self.assertEqual(ok, {})
             self.assertTrue(all("learnMcp" in v for v in fail.values()))
         learned = self.n("a")
@@ -909,26 +952,42 @@ class ReviewRegressions(unittest.TestCase):
                                                   {"titleJa": "l", "url": "https://learn.microsoft.com/azure/bar", "source": "LearnSearch"}]
         learned["events"][0]["remediationStatus"] = "supplementedByLearn"
         notices = [learned] + [self.n(i) for i in ids[1:]]
-        ok, fail, warn, learn = self.shard(dict(base, notices=notices, learnMcp="notUsed"))
+        ok, fail, warn, learn, _ = self.shard(dict(base, notices=notices, learnMcp="notUsed"))
         self.assertFalse(fail)
         e = ok["a"]["events"][0]
         self.assertEqual([l["source"] for l in e["referenceLinks"]], ["Description"])
         self.assertEqual((e["remediationStatus"], e["remediationJa"], learn), ("notFound", [], "notUsed"))
         self.assertEqual(len(warn), 2)
-        ok, _, warn, learn = self.shard(dict(base, notices=notices, learnMcp="available"))
+        ok, _, warn, learn, _ = self.shard(dict(base, notices=notices, learnMcp="available"))
         e = ok["a"]["events"][0]
         self.assertEqual((len(e["referenceLinks"]), e["remediationStatus"], learn), (2, "supplementedByLearn", "available"))
         self.assertFalse(warn)
-        ok, _, warn, learn = self.shard(dict(base, notices=notices, learnMcp="fallbackGet"))
+        ok, _, warn, learn, _ = self.shard(dict(base, notices=notices, learnMcp="fallbackGet"))
         e = ok["a"]["events"][0]
         self.assertEqual(([l["source"] for l in e["referenceLinks"]], e["remediationStatus"], e["remediationJa"], learn),
                          (["Description", "LearnSearch"], "notFound", [], "fallbackGet"))
         self.assertEqual(len(warn), 1)
-        ok, _, warn, learn = self.shard(dict(base, notices=notices, learnMcp="unavailable"))
+        ok, _, warn, learn, _ = self.shard(dict(base, notices=notices, learnMcp="unavailable"))
         e = ok["a"]["events"][0]
         self.assertEqual(([l["source"] for l in e["referenceLinks"]], e["remediationStatus"], learn),
                          (["Description"], "notFound", "unavailable"))
         self.assertEqual(len(warn), 2)
+
+    def test_learn_incomplete_flag(self):
+        ids = ["a", "b", "c", "d"]
+        base = {"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids, "failedNoticeIds": [],
+                "notices": [self.n(i) for i in ids]}
+        cases = [("available", True, True, 0), ("available", "true", True, 0), ("available", False, False, 0),
+                 ("available", None, True, 1), ("available", "yes", True, 1),
+                 ("fallbackGet", False, True, 0), ("unavailable", False, True, 0),
+                 ("notUsed", False, False, 0), ("notUsed", True, False, 1)]
+        for learn_v, flag, want, nwarn in cases:
+            ok, fail, warn, learn, inc = self.shard(dict(base, learnMcp=learn_v, learnIncomplete=flag))
+            self.assertFalse(fail, (learn_v, flag))
+            self.assertEqual((learn, inc, len(warn)), (learn_v, want, nwarn), (learn_v, flag))
+        (self.tmp / ".work" / "batch-01.json").write_text(json.dumps(dict(base, learnMcp="available")), encoding="utf-8")
+        *_, inc = shards.check_batch(self.tmp, self.st, self.b, self.meta, {})
+        self.assertTrue(inc)  # missing on a Learn MCP batch: conservatively partial
 
     def test_learn_search_links_must_point_to_learn(self):
         ids = ["a", "b", "c", "d"]
@@ -939,7 +998,7 @@ class ReviewRegressions(unittest.TestCase):
             {"titleJa": "desc", "url": "https://azure.microsoft.com/updates/y", "source": "Description"}]
         base = {"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids, "failedNoticeIds": [],
                 "notices": [a] + [self.n(i) for i in ids[1:]]}
-        ok, fail, _, _ = self.shard(dict(base, learnMcp="fallbackGet"))
+        ok, fail, _, _, _ = self.shard(dict(base, learnMcp="fallbackGet"))
         self.assertFalse(fail)
         self.assertEqual([l["url"] for l in ok["a"]["events"][0]["referenceLinks"]],
                          ["https://learn.microsoft.com/azure/bar", "https://azure.microsoft.com/updates/y"])
@@ -957,17 +1016,17 @@ class ReviewRegressions(unittest.TestCase):
 
     def test_shard_shape_never_crashes(self):
         ids = ["a", "b", "c", "d"]
-        ok, fail, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": [],
+        ok, fail, _, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": [],
                                      "failedNoticeIds": [{"id": i} for i in ids], "notices": [None]})
         self.assertEqual(ok, {})
         self.assertTrue(all(v.startswith("malformedShard") for v in fail.values()))
-        ok, fail, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids + ["a"], "returnedNoticeIds": ids,
+        ok, fail, _, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids + ["a"], "returnedNoticeIds": ids,
                                      "failedNoticeIds": [], "notices": [self.n(i) for i in ids]})
         self.assertEqual(ok, {})
         self.assertIn("duplicate", fail["a"])
         bad = self.n("a")
         bad["events"] = ["not-an-object"]
-        ok, fail, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
+        ok, fail, _, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
                                      "failedNoticeIds": [], "notices": [bad] + [self.n(i) for i in ids[1:]]})
         self.assertIn("malformedShard", fail["a"])
         self.assertEqual(sorted(ok), ["b", "c", "d"])
@@ -978,7 +1037,7 @@ class ReviewRegressions(unittest.TestCase):
                    self.n("b", {"noticeId": "a", "eventKey": "a", "evidence": ""}),           # no evidence
                    self.n("c"),
                    self.n("d", {"noticeId": "a", "eventKey": "a", "evidence": "Reminder"})]    # valid
-        ok, fail, warn, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
+        ok, fail, warn, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
                                         "failedNoticeIds": [], "notices": notices})
         self.assertFalse(fail)
         self.assertIsNone(ok["a"]["events"][0]["sameEventAs"])
@@ -1046,7 +1105,7 @@ class ReviewRegressions(unittest.TestCase):
         bad["events"][0]["impactType"] = "Nope"  # a fails validation and will be retried
         notices = [bad, self.n("b", {"noticeId": "a", "eventKey": "a", "evidence": "Reminder of the retirement."}),
                    self.n("c"), self.n("d")]
-        ok, fail, warn, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
+        ok, fail, warn, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
                                         "failedNoticeIds": [], "notices": notices})
         self.assertIn("a", fail)
         self.assertEqual(ok["b"]["events"][0]["sameEventAs"]["noticeId"], "a")

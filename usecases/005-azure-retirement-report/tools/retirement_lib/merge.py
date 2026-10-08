@@ -150,14 +150,14 @@ def _collection_plan(st: dict, final: dict | None = None) -> list[dict]:
         return plan
     failed = final["failed"]
     learn = st["capabilities"]["learnMcp"]
-    # Some accepted batch could not use Learn MCP (capped GET fallback, or no Learn at all): supplementation is partial.
+    # Some accepted batch did not serve every needed Learn supplement through Learn MCP (GET fallback or none).
     incomplete = bool(st.get("learnSupplementIncomplete"))
     plan += [
         _plan("Detail:fetchAndExtract", "常時", 5, detail, "downgraded" if failed else "done",
               cand, final["returned"], ("取得失敗: " + ", ".join(failed)) if failed else ""),
         _plan("Remediation:learnSupplement", "learnMcp=利用可", 5, "microsoft_docs_search（本文に公式リンクが無い event のみ）",
               "downgraded" if learn == "不可" or incomplete else "done", None, final["learnLinks"],
-              f"learnMcp={learn}" + ("／一部のバッチは Learn MCP 不可（上限付きの直接取得で補完、または補完不可）" if incomplete else "")),
+              f"learnMcp={learn}" + ("／一部の補完は Learn MCP によらない（上限付きの直接取得で補完、または補完不可）" if incomplete else "")),
         _plan("Normalize:eventsAndDedup", "常時", 6, "shard 統合・sameEventAs 統合・範囲の最終判定", "done",
               None, final["eventCount"], f"統合 {final['merged']} 件・範囲外 {final['outOfScope']} 件"),
         _plan("Score:impactAndSummary", "常時", 6, "impactRule の決定論適用・summary/byCategory/byQuarter 集計", "done",
