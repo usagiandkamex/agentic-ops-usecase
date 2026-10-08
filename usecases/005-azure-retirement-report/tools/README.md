@@ -28,11 +28,11 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 | 7 | `render --run <run>` | `index.html` / `retirements.csv` を生成し検証ゲート 1〜8 を実行（G4） |
 | 7 | `record-review --run <run> --result pass\|fail [--note ...]` | 独立レビューの結果を記録 |
 | 8 | `finalize --run <run>` | G3・G4・レビュー合格を確認し `.work/` を削除（削除に失敗したら `reviewed` のまま終了し、再実行できる） |
-| — | `verify --run <run>` | G3 / G4 の読み取り専用の再実行 |
+| — | `verify --run <run>` | G3 / G4 の読み取り専用の再実行（他のサブコマンドと同じロックを取り、書き込み途中のファイルを照合しない） |
 | — | `status [--run <run>]` | 現在地と次の操作（`--run` 省略で最近の実行一覧）。中断からの再開に使う |
 
 - `<type>` = `default` / `futureOnly` / `next12Months` / `all` / `custom`。`--run` は `reports/` 直下のフォルダ名（またはそのパス）。
-- 終了コード: `0` 成功 / `1` ゲート不合格 / `2` 使い方・状態のエラー（`error` と `next` を読む）/ `3` ネットワークエラー。
+- 終了コード: `0` 成功 / `1` ゲート不合格 / `2` 使い方・状態のエラー（`error` と `next` を読む）/ `3` ネットワーク・公開 API のエラー（接続失敗のほか、HTTP 200 以外・JSON 以外・サイズ超過・解析できない応答を含む）。
 
 ## 状態と再開
 
@@ -46,7 +46,13 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 ## 本文の取得（手順 5）
 
 - MRC MCP が `利用可`（`init --mrc-mcp available`）: ワーカーが MRC MCP で本文を取得する（`fetchedVia="MRC MCP"`）。
-- MRC MCP が `不可`: ワーカーはネットワークにアクセスしない。`next-wave` が各投稿の本文を公開 API（`GET .../api/v2/azure/<id>`）から取得し、テキストに変換（`<script>` / `<style>` を除去・リンクは許可リストを満たすものだけ `[URL]` で残す・メールアドレス / SafeLinks を伏字化・40,000 文字上限）して入力ファイルの `notices[].body` に入れる（`bodySource="ReleaseCommunicationsApi"`）。ワーカーはそれだけを本文として抽出し（`fetchedVia="ReleaseCommunicationsApi"`）、`body.fetchError` のある投稿は `failedNoticeIds` に入れる（通常の再委譲の対象）。`next-wave` は本文の出所（`bodySource`）と事前取得に失敗した投稿 ID をバッチの state に記録し、`check-shards` はシャードをそれと照合する（下の正規化ルール参照）。
+- MRC MCP が `不可`: ワーカーはネットワークにアクセスしない。`next-wave` が各投稿の本文を公開 API（`GET .../api/v2/azure/<id>`）から取得し、テキストに変換（`<script>` / `<style>` を除去・リンクは許可リストを満たすものだけ `[URL]` で残す・メールアドレス / SafeLinks を伏字化・40,000 文字上限）して入力ファイルの `notices[].body` に入れる（`bodySource="ReleaseCommunicationsApi"`）。`dispatch[].workerAgent` は **`azure-retirement-summarizer-offline`**（`tools: [read, edit]`・Web / MCP / 端末なし）で、オーケストレーターはこのエージェントを起動する。ワーカーはそれだけを本文として抽出し（`fetchedVia="ReleaseCommunicationsApi"`・`learnMcp="notUsed"`）、`body.fetchError` のある投稿は `failedNoticeIds` に入れる（通常の再委譲の対象）。`next-wave` は本文の出所（`bodySource`）・事前取得に失敗した投稿 ID・**入力ファイルの SHA-256** をバッチの state に記録し、`check-shards` はシャードをそれと照合する（下の正規化ルール参照）。
+- **API だけを情報源とする境界の担保**（プロンプトの指示に依存しない）:
+  - ワーカーのツール構成にネットワーク手段（Web・MRC / Learn MCP・端末）が無い。
+  - 入力ファイル（取得済み本文）が起動後に改変されていたら、そのバッチの全投稿を `malformedInput`（再委譲）にする。
+  - 既知のリタイア日（`source=description`）・`"true"` / `"false"` のフラグ・`sameEventAs` の根拠（`evidence`）は、取得済み本文（タイトル＋本文）に含まれることを照合する（Unicode 正規化・大文字小文字・記号を無視した部分一致。英数字 8 文字以上）。見つからなければ日付・フラグは `unknown` に、`sameEventAs` は統合候補から外す（警告を記録）。
+  - `referenceLinks` は取得済み本文中の `[URL]` に一致するものだけを残す（Learn 補完のリンクは除外し、`supplementedByLearn` は `notFound` に戻す）。`learnMcp` は `notUsed` に固定する。
+  - VS Code のエージェント定義ではファイル読み取りのパスを制限できないため、ワーカーが入力ファイル以外を読むことは定義の指示で禁じる。読んだ内容がレポートに入っても、日付・フラグ・統合・リンクは上の照合で取得済み本文に限られ、自由記述（要約・対応策）はサニタイズと独立レビューの対象になる。
 - ウェーブ内の全投稿の取得に失敗し、公開 API 自体にも接続できない場合は、状態を変えずに終了コード `3` で終わる（試行回数を消費しない）。ネットワークを確認して `next-wave` を再実行する。
 
 ## 収集範囲
@@ -84,7 +90,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 - マニフェスト（`expectedNoticeIds` = 割当、`returnedNoticeIds ∪ failedNoticeIds` = 割当・重複なし、`notices[].id` = 返却）が崩れたシャードは、割当の全投稿を失敗にする。投稿ごとの列挙値の誤り・必須キーの欠落はその投稿だけ失敗にする。
 - 無害な正規化: 月精度の `start` / `end` を月初・月末に、日精度の `end` を `start` に揃える、真偽値を `"true"` / `"false"` 文字列に、対応策が空なら `notFound` に、根拠（`flagEvidence`）が空の `"true"` / `"false"` フラグは `"unknown"` に、出典（`source` が `description` / `availability`）または根拠（`evidence`）が無い既知のリタイア日は `precision="unknown"` に（いずれも警告を記録）。
 - サニタイズ: 制御文字の除去・長さ上限、メールアドレス / SafeLinks の伏字化、許可リスト外のリンクの除去（SafeLinks は実 URL に復号して再判定）。
-- `sameEventAs` は、参照先が実在し（同じシャード内のイベントか、渡した参照投稿のイベント）、**同じ重複候補グループ**に属し、**根拠（`evidence`）が空でない**場合だけ残す。満たさなければ統合候補から外し、警告として記録する（無関係な投稿の誤統合を防ぐ）。
+- `sameEventAs` は、参照先が実在し（同じシャード内のイベントか、渡した参照投稿のイベント）、**同じ重複候補グループ**に属し、**根拠（`evidence`）が空でない**場合だけ残す。満たさなければ統合候補から外し、警告として記録する（無関係な投稿の誤統合を防ぐ）。参照先が**同じシャード内で検証に失敗した投稿**の場合は、その投稿が再委譲されるため外さずに残し、`merge` で参照先が受理済みのときだけ統合する（再試行上限に達したら統合されない）。
 - 失敗した投稿**だけ**を再委譲バッチ `B<NN>-r<n>`（シャード `batch-<NN>-r<n>.json`・既存シャードは上書きしない）にまとめる。試行は**投稿ごとに最大 3 回**。3 回失敗した投稿は `ledger.failedNoticeIds`（`retriesExhausted`）になり、処理は続行する。
 - 受理した抽出結果は `.work/accepted.json`（投稿ごとに唯一の有効結果）に保存する。
 

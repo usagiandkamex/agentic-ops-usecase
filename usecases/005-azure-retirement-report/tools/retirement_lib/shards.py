@@ -1,7 +1,9 @@
 """Step 5 (G2): strict shard validation + sanitizing, per-notice attempts, retry batches."""
 from __future__ import annotations
 
+import hashlib
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,68 @@ FETCHED_VIA = ("MRC MCP", "ReleaseCommunicationsApi")
 
 class ShardError(Exception):
     pass
+
+
+# ---------------------------------------------------------------- API-mode provenance (MRC MCP unavailable)
+
+MIN_EVIDENCE_CHARS = 8
+_BODY_URL_RE = re.compile(r"\[(https://[^\s\]]+)\]")
+
+
+def _norm_evidence(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s or "").casefold()
+    return re.sub(r"[^0-9a-z]+", "", s)
+
+
+def _in_body(evidence: str, body_norm: str) -> bool:
+    ev = _norm_evidence((evidence or "").rstrip("…"))
+    return len(ev) >= MIN_EVIDENCE_CHARS and ev in body_norm
+
+
+def input_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _prefetched_bodies(run: Path, b: dict) -> dict:
+    """Bodies the tool fetched for this dispatch, read from the input file after checking it was not modified."""
+    p = run / b["inputPath"]
+    want = b.get("inputSha256")
+    if not isinstance(want, str) or not p.exists() or input_digest(p) != want:
+        raise ShardError("input file missing or modified after dispatch")
+    inp = read_json(p)
+    out = {}
+    for n in inp.get("notices", []):
+        body = n.get("body") if isinstance(n, dict) else None
+        if isinstance(body, dict) and isinstance(body.get("bodyText"), str):
+            out[n["id"]] = f"{body.get('title') or ''}\n{body['bodyText']}"
+    return out
+
+
+def enforce_body_provenance(rec: dict, body: str, warnings: list[str]) -> None:
+    """The offline worker may only report facts found in the tool-fetched body; anything else is weakened."""
+    body_norm = _norm_evidence(body)
+    body_urls = set(_BODY_URL_RE.findall(body))
+    for e in rec["events"]:
+        k = e["eventKey"]
+        rd = e["retireDate"]
+        if rd["precision"] != "unknown" and rd["source"] == "description" and not _in_body(rd["evidence"], body_norm):
+            warnings.append(f"{k}: retireDate の根拠が取得済み本文に見つからないため unknown にした")
+            e["retireDate"] = {"precision": "unknown", "start": None, "end": None, "source": "none", "evidence": rd["evidence"]}
+        for f in FLAG_NAMES:
+            if e["flags"][f] != "unknown" and not _in_body(e["flagEvidence"][f], body_norm):
+                warnings.append(f"{k}: flags.{f} の根拠が取得済み本文に見つからないため unknown にした")
+                e["flags"][f] = "unknown"
+        s = e["sameEventAs"]
+        if s and not _in_body(s["evidence"], body_norm):
+            warnings.append(f"{k}: sameEventAs の根拠が取得済み本文に見つからないため統合候補から外した")
+            e["sameEventAs"] = None
+        kept = [l for l in e["referenceLinks"] if l["source"] == "Description" and l["url"] in body_urls]
+        if len(kept) != len(e["referenceLinks"]):
+            warnings.append(f"{k}: 取得済み本文に無いリンク（Learn 補完を含む）を除外した")
+            e["referenceLinks"] = kept
+        if e["remediationStatus"] == "supplementedByLearn":
+            warnings.append(f"{k}: オフラインワーカーは Learn 補完できないため remediationStatus を notFound にした")
+            e["remediationStatus"], e["remediationJa"] = "notFound", []
 
 
 def _tri(v: Any, name: str) -> str:
@@ -205,6 +269,12 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
             or len(set(pf)) != len(pf) or (pf and not api_mode)):
         return {}, {i: "malformedInput: dispatch provenance missing or inconsistent (redispatch)" for i in assigned}, warnings, None
     prefetch_failed = set(pf)
+    bodies: dict = {}
+    if api_mode:
+        try:
+            bodies = _prefetched_bodies(run, b)
+        except ShardError as ex:
+            return {}, {i: f"malformedInput: {ex} (redispatch)" for i in assigned}, warnings, None
     try:
         sh = read_json(path)
         if not isinstance(sh, dict):
@@ -235,6 +305,10 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
         if set(note_ids) != set(ret):
             raise ShardError("notices[] ids != returnedNoticeIds")
         learn = sh.get("learnMcp") if sh.get("learnMcp") in ("available", "unavailable", "notUsed") else None
+        if api_mode and learn != "notUsed":
+            # The offline worker profile has no Learn MCP; any other claim is not trusted.
+            warnings.append(f"learnMcp={learn} は MRC MCP 不可の実行（オフラインワーカー）では使えないため notUsed とした")
+            learn = "notUsed"
     except (ShardError, ValueError, OSError) as ex:
         return {}, {i: f"malformedShard: {str(ex)[:120]}" for i in assigned}, warnings, None
     ok: dict = {}
@@ -249,6 +323,8 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
         try:
             rec = validate_notice(n, meta[nid], st["enumeration"]["allowedCategories"], warnings,
                                   required_via="ReleaseCommunicationsApi" if api_mode else None)
+            if api_mode:
+                enforce_body_provenance(rec, bodies.get(nid, ""), warnings)
             rec["batchId"] = b["batchId"]
             ok[nid] = rec
         except ShardError as ex:
@@ -265,7 +341,10 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
             if not s:
                 continue
             why = None
-            if (s["noticeId"], s["eventKey"]) not in targets or s["noticeId"] == nid:
+            if s["noticeId"] == nid:
+                why = "参照先が自分自身"
+            elif (s["noticeId"], s["eventKey"]) not in targets and s["noticeId"] not in failures:
+                # A target that failed in this shard is retried; merge links it only if it is accepted later.
                 why = "参照先が存在しない"
             elif group_of.get(nid) is None or group_of.get(nid) != group_of.get(s["noticeId"]):
                 why = "参照先が同じ重複候補グループに無い"

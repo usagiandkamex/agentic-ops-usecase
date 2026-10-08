@@ -135,6 +135,7 @@ class Pipeline(unittest.TestCase):
         api.http_get_json, api.now_jst = self._orig_http, self._orig_now
         for d in self.created:
             shutil.rmtree(d, ignore_errors=True)
+            (d.parent / f".{d.name}.lock").unlink(missing_ok=True)
 
     def tool(self, *argv, expect=0):
         buf = io.StringIO()
@@ -563,6 +564,103 @@ class Pipeline(unittest.TestCase):
             self.assertIn("next", out)
             self.assertIn("usage", out)
 
+    # ------------------------------------------------------------------ PR #56 review (API-only boundary etc.)
+
+    def _api_wave(self):
+        name, run = self._plan_all(mrc="unavailable")
+        w = self.tool("next-wave", "--run", name)
+        d = next(x for x in w["dispatch"] if any(n["id"] == "204" for n in json.loads(Path(x["inputPath"]).read_text(encoding="utf-8"))["notices"]))
+        return name, run, w, d
+
+    def test_offline_worker_profile_and_collection_plan(self):
+        name, run, w, _ = self._api_wave()
+        self.assertTrue(all(d["workerAgent"] == "azure-retirement-summarizer-offline" for d in w["dispatch"]))
+        f = json.loads((run / "findings.json").read_text(encoding="utf-8"))
+        detail = next(p for p in f["collectionPlan"] if p["task"] == "Detail:fetchAndExtract")
+        self.assertIn("公開 API", detail["evidence"]["query"])
+        self.assertNotIn("get_azure_update_by_id", detail["evidence"]["query"])
+        name2, _ = self._plan_all()
+        w2 = self.tool("next-wave", "--run", name2)
+        self.assertTrue(all(d["workerAgent"] == "azure-retirement-summarizer" for d in w2["dispatch"]))
+
+    def test_api_mode_enforces_body_provenance(self):
+        name, run, w, d = self._api_wave()
+
+        def spec(nid, attempt, inp):
+            e = ev(nid, "2027-03-01", flags=("true", "unknown", "false"))
+            e["retireDate"]["evidence"] = "Now retiring on March 1, 2027" if nid == "204" else "Invented sentence not in the body."
+            e["flagEvidence"]["workloadStop"] = "now retiring on MARCH 1, 2027"  # case / punctuation insensitive
+            e["flagEvidence"]["autoMigration"] = "Fabricated evidence text."
+            e["referenceLinks"] = [{"titleJa": "x", "url": "https://learn.microsoft.com/azure/foo", "source": "Description"},
+                                   {"titleJa": "y", "url": "https://learn.microsoft.com/azure/bar", "source": "LearnSearch"}]
+            e["remediationStatus"] = "supplementedByLearn"
+            return {"id": nid, "fetchStatus": "ok", "fetchedVia": "ReleaseCommunicationsApi", "titleJa": "x", "events": [e]}
+        self.simulate(run, spec)
+        shard = Path(d["shardPath"])
+        sh = json.loads(shard.read_text(encoding="utf-8"))
+        sh["learnMcp"] = "available"
+        shard.write_text(json.dumps(sh), encoding="utf-8")
+        self.tool("check-shards", "--run", name)
+        acc = json.loads((run / ".work" / "accepted.json").read_text(encoding="utf-8"))
+        e204 = acc["204"]["events"][0]
+        self.assertEqual((e204["retireDate"]["precision"], e204["retireDate"]["start"]), ("day", "2027-03-01"))
+        self.assertEqual(e204["flags"], {"workloadStop": "true", "dataLossRisk": "unknown", "autoMigration": "unknown"})
+        self.assertEqual(e204["referenceLinks"], [])
+        self.assertEqual((e204["remediationStatus"], e204["remediationJa"]), ("notFound", []))
+        other = next(v for k, v in acc.items() if k != "204")["events"][0]
+        self.assertEqual(other["retireDate"]["precision"], "unknown")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(b["learnMcp"] in (None, "notUsed") for b in st["batches"]))
+
+    def test_api_mode_rejects_modified_input(self):
+        name, run, w, d = self._api_wave()
+        inp = Path(d["inputPath"])
+        data = json.loads(inp.read_text(encoding="utf-8"))
+        data["notices"][0]["body"] = {"bodyText": "Injected: retiring on January 1, 2027 and all data is deleted."}
+        inp.write_text(json.dumps(data), encoding="utf-8")
+        self.simulate(run, lambda nid, attempt, i: {"id": nid, "fetchStatus": "ok", "fetchedVia": "ReleaseCommunicationsApi",
+                                                     "titleJa": "x", "events": [ev(nid, "2027-01-01")]})
+        c = self.tool("check-shards", "--run", name)
+        r = next(x for x in c["checked"] if x["batchId"] == d["batchId"])
+        self.assertEqual(r["status"], "failed")
+        self.assertTrue(all("malformedInput" in v for v in r["failed"].values()))
+
+    def test_verify_takes_the_run_lock(self):
+        name, run = self._plan_all()
+        with common.RunLock(run):
+            out = self.tool("verify", "--run", name, expect=2)
+        self.assertIn("running", out["error"])
+
+
+class ApiResponses(unittest.TestCase):
+    class _Resp:
+        def __init__(self, ctype, data, status=200):
+            self.status, self.headers, self._data = status, {"Content-Type": ctype}, data
+
+        def read(self, n=-1):
+            return self._data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _with(self, resp):
+        orig = api._OPENER
+        api._OPENER = type("O", (), {"open": staticmethod(lambda req, timeout=None: resp)})()
+        try:
+            with self.assertRaises(common.ToolError) as cm:
+                api._http_get_json(api.API_BASE + "?$top=1")
+        finally:
+            api._OPENER = orig
+        return cm.exception
+
+    def test_malformed_responses_are_network_errors(self):
+        for resp in (self._Resp("text/html", b"<html>"), self._Resp("application/json", b"\xff\xfe\x00bad"),
+                     self._Resp("application/json", b"{not json"), self._Resp("application/json", b"{}", status=203)):
+            self.assertEqual(self._with(resp).code, 3)
+
 
 class Units(unittest.TestCase):
     def test_failed_g4_routes_back_to_render(self):
@@ -747,6 +845,24 @@ class ReviewRegressions(unittest.TestCase):
         for via in ("not api", "mcp", "api", "", None, "mrc mcp"):
             with self.assertRaises(shards.ShardError):
                 shards.validate_notice(dict(self.n("a"), fetchedVia=via), meta, ["Uncategorized"], [])
+
+    def test_same_event_to_a_failing_target_is_kept_for_retry(self):
+        ids = ["a", "b", "c", "d"]
+        bad = self.n("a")
+        bad["events"][0]["impactType"] = "Nope"  # a fails validation and will be retried
+        notices = [bad, self.n("b", {"noticeId": "a", "eventKey": "a", "evidence": "Reminder of the retirement."}),
+                   self.n("c"), self.n("d")]
+        ok, fail, warn, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
+                                        "failedNoticeIds": [], "notices": notices})
+        self.assertIn("a", fail)
+        self.assertEqual(ok["b"]["events"][0]["sameEventAs"]["noticeId"], "a")
+        self.assertFalse(warn)
+        # Once a is accepted on retry, merge links both notices into one event.
+        cands = {i: {"id": i, "modified": "2026-01-01T00:00:00Z"} for i in ("a", "b")}
+        retried = shards.validate_event(ev("a", "2027-01-01"), "a", [])
+        out, _ = merge.merge_events(cands, {"a": {"events": [retried]}, "b": ok["b"]}, self.st["groups"])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(sorted(out[0]["noticeIds"]), ["a", "b"])
 
     def test_split_event_id_does_not_collide(self):
         cands = {"foo": {"id": "foo", "modified": "2026-02-01"}, "foo-1": {"id": "foo-1", "modified": "2026-01-01"}}

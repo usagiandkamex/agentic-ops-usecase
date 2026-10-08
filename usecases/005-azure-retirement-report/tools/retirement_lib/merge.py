@@ -128,15 +128,22 @@ def _plan(task: str, required: str, step: int, query: str, status: str = "pendin
                          "collectedAt": jst_stamp() if status != "pending" else "", "note": note}}
 
 
+def _detail_query(st: dict) -> str:
+    if st["capabilities"].get("mrcMcp") == "不可":
+        return "公開 API GET /api/v2/azure/<id>（同梱ツールの next-wave が取得）→ ワーカー並列（ネットワークなしで抽出）"
+    return "get_azure_update_by_id（ワーカー並列）"
+
+
 def _collection_plan(st: dict, final: dict | None = None) -> list[dict]:
     e = st["enumeration"]
     en = e["enumeration"]
     cand = len(e["candidateNoticeIds"])
+    detail = _detail_query(st)
     plan = [_plan("Enumerate:retirementNotices", "常時", 4, "tags/any(t:t eq 'Retirements') ＋ 年フィルタと補集合 ＋ 補集合の本文の年による候補補完",
                   "done", en["inScopeCount"] + len(e["prefilter"]["bodyYearMatchedNoticeIds"]), cand,
                   f"consistent={'true' if en['consistent'] else 'false'}／screenStatus={e['prefilter']['screenStatus']}")]
     if final is None:
-        plan += [_plan("Detail:fetchAndExtract", "常時", 5, "get_azure_update_by_id（ワーカー並列）"),
+        plan += [_plan("Detail:fetchAndExtract", "常時", 5, detail),
                  _plan("Remediation:learnSupplement", "learnMcp=利用可", 5, "microsoft_docs_search（本文に公式リンクが無い event のみ）"),
                  _plan("Normalize:eventsAndDedup", "常時", 6, "shard 統合・sameEventAs 統合・範囲の最終判定"),
                  _plan("Score:impactAndSummary", "常時", 6, "impactRule の決定論適用・summary/byCategory/byQuarter 集計")]
@@ -144,7 +151,7 @@ def _collection_plan(st: dict, final: dict | None = None) -> list[dict]:
     failed = final["failed"]
     learn = st["capabilities"]["learnMcp"]
     plan += [
-        _plan("Detail:fetchAndExtract", "常時", 5, "get_azure_update_by_id（ワーカー並列）", "downgraded" if failed else "done",
+        _plan("Detail:fetchAndExtract", "常時", 5, detail, "downgraded" if failed else "done",
               cand, final["returned"], ("取得失敗: " + ", ".join(failed)) if failed else ""),
         _plan("Remediation:learnSupplement", "learnMcp=利用可", 5, "microsoft_docs_search（本文に公式リンクが無い event のみ）",
               "downgraded" if learn == "不可" else "done", None, final["learnLinks"], f"learnMcp={learn}"),

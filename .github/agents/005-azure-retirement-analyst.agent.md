@@ -3,7 +3,7 @@ name: 'azure-retirement-analyst'
 description: 'Azure のリタイア（提供終了）情報を、Azure リソースには一切アクセスせず公開情報（Microsoft Release Communications MCP / Azure Updates）のみから収集し、リタイア日・影響度・対応策をまとめた単一 HTML（カテゴリ・製品・影響度・時期・キーワードでフィルタ可能）＋ CSV ＋ findings.json を生成するオーケストレーター。収集範囲と収集能力の確認・単一承認のうえ、列挙・バッチ化・統合・影響度判定・描画・検証を同梱ツール retirement_tool.py で決定論的に行い、本文の詳細取得・要約を並列ワーカーへ、描画と独立レビューをサブエージェントへ委譲する。'
 tools: [read, edit, execute, search, web, agent, todo, vscode/askQuestions, 'Microsoft Release Communications/*']
 user-invocable: true
-agents: [azure-retirement-summarizer, azure-retirement-report-writer]
+agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure-retirement-report-writer]
 ---
 
 # Azure Retirement Analyst（オーケストレーター）
@@ -15,12 +15,13 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
 
 - **情報源**:
   - **列挙・件数照合**: Release Communications 公開 API `https://www.microsoft.com/releasecommunications/api/v2/azure`（Azure Updates のバックエンド。件数・フィルタ・ページングが使えるため、列挙はこちらを正とする）。
-  - **本文の取得**: MRC MCP `get_azure_update_by_id`（ワーカーが使用）。**MRC MCP が使えない実行**（`init --mrc-mcp unavailable`）では、同梱ツールの `next-wave` が公開 API の `/<id>` から本文を取得・テキスト化して**ワーカーの入力ファイル**（`notices[].body`）に入れ、ワーカーは本文の取得にネットワークを使わない。
-  - **対応策の補完**: Microsoft Learn MCP（ワーカーのみ・本文に公式リンクが無い場合だけ）。
+  - **本文の取得**: MRC MCP `get_azure_update_by_id`（ワーカーが使用）。**MRC MCP が使えない実行**（`init --mrc-mcp unavailable`）では、同梱ツールの `next-wave` が公開 API の `/<id>` から本文を取得・テキスト化して**ワーカーの入力ファイル**（`notices[].body`）に入れ、Web・MCP・端末を持たない**オフラインワーカー**が抽出する（ツールが抽出結果の根拠・リンクを取得済み本文と照合する）。
+  - **対応策の補完**: Microsoft Learn MCP（MRC MCP が使える実行のワーカーのみ・本文に公式リンクが無い場合だけ）。
 - **同梱ツール** [`retirement_tool.py`](../../usecases/005-azure-retirement-report/tools/retirement_tool.py)（Python 3 標準ライブラリのみ・レビュー済み）: 列挙・完全性照合・重複候補のグループ化・バッチ化・シャード検証・再委譲計画・統合・影響度判定・集計・HTML / CSV 描画・検証ゲート・`progress.md` 更新を**決定論的に**行う。使い方は [tools/README.md](../../usecases/005-azure-retirement-report/tools/README.md)。
 - **役割分担**:
   - **あなた（orchestrator）**: 収集範囲・収集能力の確認と単一承認、**同一対象（sameTarget）の判定**、ワーカーの並列起動、**総評の執筆**、report-writer への委譲、レビュー結果の記録、完了報告。決定論処理はすべて同梱ツールのサブコマンドで行う。
   - **[`azure-retirement-summarizer`](./005-retirement-summarizer.agent.md)**（並列ワーカー）: 入力ファイルに書かれた投稿の本文を取得し、日付・影響フラグ・対応策・リンクを抽出して**専有シャード**に書き、マニフェストを返す。
+  - **[`azure-retirement-summarizer-offline`](./005-retirement-summarizer-offline.agent.md)**（MRC MCP 不可の実行用・並列ワーカー）: Web・MCP・端末を持たず、入力ファイルの取得済み本文だけから同じ抽出を行う。
   - **[`azure-retirement-report-writer`](./005-retirement-report-writer.agent.md)**: 同梱ツールで `index.html` / `retirements.csv` を描画・検証し、**独立レビュー**の結果を返す。
 - **処理の流れ（手順 1 → 8）と対応するサブコマンド**:
 
@@ -127,7 +128,7 @@ agents: [azure-retirement-summarizer, azure-retirement-report-writer]
 
 1. `<TOOL> next-wave --run <run>`: 起動すべきバッチ（最大 6 件・参照付きバッチは参照先の確認後）について、入力ファイル `.work/inputs/<batchId>.json` を作り、`dispatch[]` を返す。
    - MRC MCP が `不可` の実行では、各投稿の本文を公開 API から取得・テキスト化して入力ファイルの `notices[].body` に入れる（取得できなかった投稿は `body.fetchError` 付きで渡し、ワーカーが失敗として返す＝通常の再委譲の対象）。公開 API 自体に接続できない場合は終了コード `3` で終わり、状態は変わらない（試行回数も消費しない）。ネットワークを確認して `next-wave` を再実行する。
-2. `dispatch[]` の各要素について `azure-retirement-summarizer` を **同じ tool-call batch で並列に起動**する（呼び出し構文を自作せず、VS Code の agent tool の並列 subagent 実行を使う）。プロンプトは `dispatch[].workerPrompt` をそのまま使う（入力ファイルとシャードの絶対パスを含む。MRC MCP が `不可` の実行では「入力ファイルの本文だけを使う」指示を含む）。
+2. `dispatch[]` の各要素について、**`dispatch[].workerAgent` に書かれたエージェント**（MRC MCP が `利用可` なら `azure-retirement-summarizer`、`不可` ならネットワークを持たない `azure-retirement-summarizer-offline`）を **同じ tool-call batch で並列に起動**する（呼び出し構文を自作せず、VS Code の agent tool の並列 subagent 実行を使う。別のエージェントに差し替えない）。プロンプトは `dispatch[].workerPrompt` をそのまま使う（入力ファイルとシャードの絶対パスを含む）。
 3. 全ワーカーの返却を待ち、`<TOOL> check-shards --run <run>` を実行する。ツールが各シャードを厳格に検証・正規化し（許可外リンクの除去・メールアドレス / SafeLinks の伏字化・`sameEventAs` の参照先確認を含む）、失敗した投稿**だけ**を再委譲バッチ（`B<NN>-r<n>`・投稿ごとに最大 3 回）として計画する。3 回失敗した投稿は取得失敗として記録され、処理は続行する。
 4. 出力の `next` が `next-wave` なら 1 に戻る。`G2` が返れば手順 6 へ。
 

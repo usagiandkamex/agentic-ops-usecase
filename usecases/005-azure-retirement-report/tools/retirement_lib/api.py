@@ -51,18 +51,21 @@ def _http_get_json(url: str) -> Any:
             req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "agentic-ops-usecase-005/" + TOOL_VERSION})
             with _OPENER.open(req, timeout=60) as r:
                 if r.status != 200:
-                    raise ToolError(f"API returned HTTP {r.status}")
+                    raise ToolError(f"API returned HTTP {r.status}", code=3)
                 if "json" not in (r.headers.get("Content-Type") or "").lower():
-                    raise ToolError("API returned a non-JSON response")
+                    raise ToolError("API returned a non-JSON response", code=3)
                 data = r.read(MAX_RESPONSE_BYTES + 1)
                 if len(data) > MAX_RESPONSE_BYTES:
-                    raise ToolError("API response too large")
-                return json.loads(data.decode("utf-8"))
+                    raise ToolError("API response too large", code=3)
+                try:
+                    return json.loads(data.decode("utf-8"))
+                except ValueError as e:  # JSONDecodeError / UnicodeDecodeError
+                    raise ToolError(f"API returned an unparsable response: {type(e).__name__}", code=3)
         except urllib.error.HTTPError as e:
             last = e
             if e.code < 500 and e.code != 429:
                 break
-        except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as e:
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             last = e
         time.sleep(2 * (attempt + 1))
     raise ToolError(f"Release Communications API GET failed: {type(last).__name__}: {str(last)[:200]}", code=3)

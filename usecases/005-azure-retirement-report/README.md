@@ -20,7 +20,7 @@ HTML 上で **カテゴリ（Compute / Databases 等）・製品（リソース�
 ## 前提条件
 
 - **Azure の権限・認証は不要**（Azure リソース・サブスクリプションへはアクセスしない）。
-- **Microsoft Release Communications（MRC）MCP サーバ**（推奨・認証不要）。[.vscode/mcp.json](../../.vscode/mcp.json) に `Microsoft Release Communications` として定義済み。ワーカーが本文の取得に使う（利用できない場合は、同梱ツールの `next-wave` が Azure Updates と同一データ源の公開 API `https://www.microsoft.com/releasecommunications/api/v2/azure` から本文を取得してワーカーの入力ファイルに入れる）。
+- **Microsoft Release Communications（MRC）MCP サーバ**（推奨・認証不要）。[.vscode/mcp.json](../../.vscode/mcp.json) に `Microsoft Release Communications` として定義済み。ワーカーが本文の取得に使う（利用できない場合は、同梱ツールの `next-wave` が Azure Updates と同一データ源の公開 API `https://www.microsoft.com/releasecommunications/api/v2/azure` から本文を取得し、ネットワークを持たないオフラインワーカーが抽出する。この場合 Learn MCP による対応策の補完は行わない）。
 - **Microsoft Learn MCP サーバ**（任意・認証不要）。対応策の補完に使う。[.vscode/mcp.json](../../.vscode/mcp.json) に `Microsoft Learn` として定義済み（無くても動作する）。
 - インターネット（`www.microsoft.com` / `learn.microsoft.com`）への HTTPS 接続。列挙・件数照合には公開 API への接続が必須。
 - VS Code + GitHub Copilot 拡張機能、**Python 3.9 以降**（同梱ツール [`tools/retirement_tool.py`](tools/README.md) の実行に使用・標準ライブラリのみで追加パッケージ不要）。
@@ -35,6 +35,7 @@ HTML 上で **カテゴリ（Compute / Databases 等）・製品（リソース�
 | --- | --- | --- | --- |
 | エージェント（オーケストレーター） | [.github/agents/005-azure-retirement-analyst.agent.md](../../.github/agents/005-azure-retirement-analyst.agent.md) | エージェント選択 `azure-retirement-analyst` | 収集範囲の確認・承認、同一対象の判定、ワーカーの並列実行、総評、レビュー結果の記録（決定論処理は同梱ツールで実行） |
 | サブエージェント（並列ワーカー） | [.github/agents/005-retirement-summarizer.agent.md](../../.github/agents/005-retirement-summarizer.agent.md) | 自動（オーケストレーターから） | 最大 8 件のバッチ単位で本文を取得し、日付・影響フラグ・対応策・リンクを抽出 |
+| サブエージェント（オフライン並列ワーカー） | [.github/agents/005-retirement-summarizer-offline.agent.md](../../.github/agents/005-retirement-summarizer-offline.agent.md) | 自動（MRC MCP が使えない実行で） | Web・MCP・端末を持たず、同梱ツールが公開 API から取得した本文だけから同じ抽出を行う |
 | サブエージェント（レポート生成） | [.github/agents/005-retirement-report-writer.agent.md](../../.github/agents/005-retirement-report-writer.agent.md) | 自動（オーケストレーターから） | 同梱ツールで HTML / CSV を生成・検証し、独立レビューを実施 |
 | 同梱ツール | [tools/retirement_tool.py](tools/README.md) | エージェントが実行 | 列挙・完全性照合・バッチ化・シャード検証・統合・影響度判定・集計・描画・検証ゲート・進捗管理（決定論・再開可能） |
 | インストラクション | [.github/instructions/005-retirement-report.instructions.md](../../.github/instructions/005-retirement-report.instructions.md) | 自動適用 | 公開情報のみ・同梱ツール以外のスクリプト禁止・判定の原則などの共通ルール |

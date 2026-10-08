@@ -264,10 +264,12 @@ def cmd_render(args: Any, run: Path) -> dict:
 
 
 def cmd_verify(args: Any, run: Path) -> dict:
-    f = read_json(run / "findings.json")
-    out: dict = {"run": run.name, "G3": verify_findings(f) or "pass"}
-    if (run / "index.html").exists() and (run / "retirements.csv").exists():
-        out["G4"] = verify_report(run)
+    # Same lock as render/finalize so the snapshot never mixes file generations.
+    with RunLock(run):
+        f = read_json(run / "findings.json")
+        out: dict = {"run": run.name, "G3": verify_findings(f) or "pass"}
+        if (run / "index.html").exists() and (run / "retirements.csv").exists():
+            out["G4"] = verify_report(run)
     ok = out["G3"] == "pass" and all(v == "pass" for v in out.get("G4", {}).values())
     if not ok:
         raise ToolError("verification failed", code=1, **out)
