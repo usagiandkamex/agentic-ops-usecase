@@ -5,9 +5,9 @@ import datetime as dt
 from pathlib import Path
 from typing import Any
 
-from .common import (PLACEHOLDER_RE, REPO_REL_REPORTS, TOOL_VERSION, RunLock, ToolError, clean_text, id_key,
-                     jst_stamp, load_state, log, ordinal_ignore_case_key, read_json, require_phase, save_state,
-                     sensitive_kinds, url_violation, walk_strings, write_json, write_text)
+from .common import (HIGHLIGHT_INPUT, PLACEHOLDER_RE, REPO_REL_REPORTS, TOOL_VERSION, RunLock, ToolError, clean_text,
+                     id_key, jst_stamp, load_state, log, ordinal_ignore_case_key, read_json, read_text_input,
+                     require_phase, save_state, sensitive_kinds, url_violation, walk_strings, write_json, write_text)
 from .plan import _UF, _recency, load_accepted, load_candidates
 
 MATRIX = {3: {3: "High", 2: "High", 1: "Medium"}, 2: {3: "High", 2: "Medium", 1: "Low"}, 1: {3: "Medium", 2: "Low", 1: "Low"}}
@@ -432,24 +432,25 @@ def cmd_merge(args: Any, run: Path) -> dict:
            for e in f["events"] if e["impact"] == "High"][:8]
     return {"run": st["runId"], "G3": "pass", "summary": s, "highlightFacts": {"highEvents": top,
             "byCategoryTop": sorted(f["byCategory"], key=lambda c: -c["total"])[:5]},
-            "next": (f"上の事実だけを使って総評（2〜4 文・日本語）を書き、set-highlight --run {st['runId']} --text \"...\" で記録する")}
+            "next": (f"上の事実だけを使って総評（2〜4 文・日本語）を書き、編集ツールで {HIGHLIGHT_INPUT} に書いてから set-highlight --run {st['runId']} で記録する（端末のコマンドラインに総評を書かない）")}
 
 
 def cmd_set_highlight(args: Any, run: Path) -> dict:
     from .progress import render_progress
-    text = clean_text(args.text, 700)
-    errors = []
-    if len(text) < 20:
-        errors.append("総評が短すぎる（20 文字以上）")
-    if "{{" in text or PLACEHOLDER_RE.search(text) or "<" in text or ">" in text:
-        errors.append("総評に山括弧・プレースホルダ・テンプレートトークンを含めない")
-    if text != (args.text or "").strip() and "削除]" in text:
-        errors.append("総評にメールアドレス・SafeLinks を含めない")
-    if errors:
-        raise ToolError("set-highlight rejected", errors=errors)
     with RunLock(run):
         st = load_state(run)
         require_phase(st, ("merged", "highlighted", "rendered"), "set-highlight")
+        raw = read_text_input(run, HIGHLIGHT_INPUT) or ""
+        text = clean_text(raw, 700)
+        errors = []
+        if len(text) < 20:
+            errors.append("総評が短すぎる（20 文字以上）")
+        if "{{" in text or PLACEHOLDER_RE.search(text) or "<" in text or ">" in text:
+            errors.append("総評に山括弧・プレースホルダ・テンプレートトークンを含めない")
+        if text != " ".join(raw.split()) and "削除]" in text:
+            errors.append("総評にメールアドレス・SafeLinks を含めない")
+        if errors:
+            raise ToolError("set-highlight rejected", errors=errors, next=f"{HIGHLIGHT_INPUT} を書き直して再実行する")
         f = read_json(run / "findings.json")
         f["summary"]["statusHighlight"] = text
         fails = verify_findings(f)
@@ -462,5 +463,6 @@ def cmd_set_highlight(args: Any, run: Path) -> dict:
         log(st, "set-highlight", "総評を記録")
         save_state(run, st)
         write_text(run, "progress.md", render_progress(st))
+        (run / HIGHLIGHT_INPUT).unlink(missing_ok=True)
     return {"run": st["runId"], "statusHighlight": text,
             "next": f"azure-retirement-report-writer に render / verify と独立レビューを委譲する（render --run {st['runId']}）"}

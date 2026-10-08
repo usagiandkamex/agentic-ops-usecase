@@ -307,6 +307,33 @@ def write_json(run: Path, rel: str | Path, obj: Any) -> Path:
     return write_text(run, rel, dump_json(obj))
 
 
+HIGHLIGHT_INPUT = ".work/highlight.txt"
+REVIEW_NOTE_INPUT = ".work/review-note.txt"
+MAX_INPUT_BYTES = 16 * 1024
+
+
+def read_text_input(run: Path, rel: str, required: bool = True) -> str | None:
+    """Read agent-authored free text from a fixed, run-scoped file (never from the command line).
+
+    Report-derived text must not pass through shell parsing, so the orchestrator writes it with its file
+    tool and the subcommand reads it here. Links, oversized and non-UTF-8 files are rejected.
+    """
+    target = run / rel
+    if not target.exists() and not target.is_symlink():
+        if required:
+            raise ToolError(f"input file not found: {rel}", next=f"編集ツールで <run>/{rel} にテキストを書いてから再実行する")
+        return None
+    work_dir(run)
+    if target.is_symlink() or not target.is_file() or _norm(target) != os.path.normcase(str(Path(_norm(run)) / rel)):
+        raise ToolError(f"{rel} must be a regular file inside the run folder")
+    if target.stat().st_size > MAX_INPUT_BYTES:
+        raise ToolError(f"{rel} is too large (max {MAX_INPUT_BYTES} bytes)")
+    try:
+        return target.read_bytes().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise ToolError(f"{rel} must be UTF-8 text") from None
+
+
 class RunLock:
     """Exclusive lock per run, held through an OS file lock (flock / msvcrt) on reports/.<run>.lock.
 

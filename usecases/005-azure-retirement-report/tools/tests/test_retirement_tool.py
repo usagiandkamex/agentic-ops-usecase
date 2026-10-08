@@ -145,6 +145,10 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(code, expect, out)
         return out
 
+    def highlight(self, run, text, expect=0):
+        (run / common.HIGHLIGHT_INPUT).write_text(text, encoding="utf-8")
+        return self.tool("set-highlight", "--run", run.name, expect=expect)
+
     def init(self, scope="next12Months", mrc="available"):
         out = self.tool("init", "--scope", scope, "--as-of", AS_OF, "--mrc-mcp", mrc)
         run = common.reports_root() / out["run"]
@@ -279,8 +283,11 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(m["summary"]["eventCount"], len(f["events"]))
 
         self.tool("render", "--run", name, expect=2)  # highlight required first
-        self.tool("set-highlight", "--run", name, "--text", "短い", expect=2)
-        self.tool("set-highlight", "--run", name, "--text", "テスト用の総評です。High の件数と 90 日以内の件数を確認してください。")
+        self.tool("set-highlight", "--run", name, expect=2)  # input file missing
+        self.highlight(run, "短い", expect=2)
+        self.assertTrue((run / common.HIGHLIGHT_INPUT).exists())  # kept for rewriting after a rejection
+        self.highlight(run, "テスト用の総評です。High の件数と 90 日以内の件数を確認してください。")
+        self.assertFalse((run / common.HIGHLIGHT_INPUT).exists())  # consumed
         r = self.tool("render", "--run", name)
         self.assertTrue(all(v == "pass" for v in r["G4"].values()), r["G4"])
         h = (run / "index.html").read_text(encoding="utf-8")
@@ -494,7 +501,7 @@ class Pipeline(unittest.TestCase):
         self.drive(name, run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP",
                                                           "titleJa": "x", "events": [ev(nid, "2027-01-01")]})
         self.tool("merge", "--run", name)
-        self.tool("set-highlight", "--run", name, "--text", "テスト用の総評です。High の件数と 90 日以内の件数を確認してください。")
+        self.highlight(run, "テスト用の総評です。High の件数と 90 日以内の件数を確認してください。")
         self.tool("render", "--run", name)
         self.tool("record-review", "--run", name, "--result", "pass")
         return name, run
@@ -523,6 +530,38 @@ class Pipeline(unittest.TestCase):
         fin = self.tool("finalize", "--run", name)
         self.assertEqual(fin["files"], ["findings.json", "index.html", "progress.md", "retirements.csv"])
         self.assertEqual(self.tool("status", "--run", name)["phase"], "finalized")
+
+    def test_free_text_is_read_from_run_files_not_argv(self):
+        name, run = self._plan_all()
+        self.drive(name, run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP",
+                                                          "titleJa": "x", "events": [ev(nid, "2027-01-01")]})
+        self.tool("merge", "--run", name)
+        self.tool("set-highlight", "--run", name, "--text", "x", expect=2)  # no command-line free text
+        shell_like = 'High は 3 件です。"; $(touch pwned) `id` を含む文字列もそのまま記録される。'
+        out = self.highlight(run, shell_like)
+        self.assertEqual(out["statusHighlight"], shell_like)
+        self.tool("render", "--run", name)
+        self.tool("record-review", "--run", name, "--result", "fail", "--note", "x", expect=2)
+        (run / common.REVIEW_NOTE_INPUT).write_text("総評と件数が一致しない。\n再確認する。", encoding="utf-8")
+        out = self.tool("record-review", "--run", name, "--result", "fail")
+        self.assertEqual(out["review"]["note"], "総評と件数が一致しない。 再確認する。")
+        self.assertFalse((run / common.REVIEW_NOTE_INPUT).exists())
+        out = self.tool("record-review", "--run", name, "--result", "pass")
+        self.assertEqual(out["review"]["note"], "")  # a consumed note is never reused
+        (run / common.REVIEW_NOTE_INPUT).write_bytes(b"x" * (common.MAX_INPUT_BYTES + 1))
+        self.tool("record-review", "--run", name, "--result", "pass", expect=2)
+        (run / common.REVIEW_NOTE_INPUT).unlink()
+        if hasattr(os, "symlink"):
+            outside = run.parent / f".{name}-outside.txt"
+            outside.write_text("外部ファイルの内容を総評として読ませない。十分な長さの文字列。", encoding="utf-8")
+            try:
+                try:
+                    os.symlink(outside, run / common.HIGHLIGHT_INPUT)
+                except OSError:
+                    return
+                self.tool("set-highlight", "--run", name, expect=2)
+            finally:
+                outside.unlink(missing_ok=True)
 
     def test_status_when_only_an_empty_work_dir_remains(self):
         name, run = self._to_reviewed()
@@ -624,6 +663,27 @@ class Pipeline(unittest.TestCase):
         r = next(x for x in c["checked"] if x["batchId"] == d["batchId"])
         self.assertEqual(r["status"], "failed")
         self.assertTrue(all("malformedInput" in v for v in r["failed"].values()))
+
+    def test_api_mode_checks_availability_dates_against_fetched_availabilities(self):
+        name, run, w, d = self._api_wave()
+
+        def spec(nid, attempt, inp):
+            e = ev(nid + "-1", "2027-03", prec="month")  # notice 204 was fetched with availability 2024-05
+            e["retireDate"].update({"source": "availability", "evidence": "Azure Updates の月"})
+            e2 = ev(nid + "-2", "2027-03-15")
+            e2["retireDate"].update({"source": "availability", "evidence": "Azure Updates の月"})  # day from a month
+            return {"id": nid, "fetchStatus": "ok", "fetchedVia": "ReleaseCommunicationsApi", "titleJa": "x", "events": [e, e2]}
+        self.simulate(run, spec)
+        self.tool("check-shards", "--run", name)
+        acc = json.loads((run / ".work" / "accepted.json").read_text(encoding="utf-8"))
+        rd = {nid: [e["retireDate"] for e in r["events"]] for nid, r in acc.items()}
+        self.assertEqual((rd["204"][0]["precision"], rd["204"][0]["source"]), ("unknown", "none"))
+        kept = [n for n in acc if n not in ("201", "204", "205")]
+        self.assertTrue(kept)
+        for nid in kept:  # fetched availability 2027-03 matches
+            self.assertEqual((rd[nid][0]["precision"], rd[nid][0]["start"]), ("month", "2027-03-01"))
+        for nid, dates in rd.items():
+            self.assertEqual(dates[1]["precision"], "unknown")
 
     def test_verify_takes_the_run_lock(self):
         name, run = self._plan_all()

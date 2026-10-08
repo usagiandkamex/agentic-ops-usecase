@@ -10,6 +10,7 @@ from typing import Any
 from .common import (MAX_ATTEMPTS, MAX_BATCH, RunLock, ToolError, clean_list, clean_text, id_key, load_state, log,
                      month_bounds, normalize_link, parse_date, read_json, require_phase, save_state, write_json,
                      write_text)
+from .api import availability_month
 from .plan import _new_batch, _recency, load_accepted, load_candidates
 
 PRECISIONS = {"day", "month", "unknown"}
@@ -57,19 +58,27 @@ def _prefetched_bodies(run: Path, b: dict) -> dict:
     for n in inp.get("notices", []):
         body = n.get("body") if isinstance(n, dict) else None
         if isinstance(body, dict) and isinstance(body.get("bodyText"), str):
-            out[n["id"]] = f"{body.get('title') or ''}\n{body['bodyText']}"
+            out[n["id"]] = {"text": f"{body.get('title') or ''}\n{body['bodyText']}",
+                            "availabilityMonth": availability_month(body.get("availabilities"))}
     return out
 
 
-def enforce_body_provenance(rec: dict, body: str, warnings: list[str]) -> None:
+def enforce_body_provenance(rec: dict, body: dict, warnings: list[str]) -> None:
     """The offline worker may only report facts found in the tool-fetched body; anything else is weakened."""
-    body_norm = _norm_evidence(body)
-    body_urls = set(_BODY_URL_RE.findall(body))
+    text = body.get("text") or ""
+    body_norm = _norm_evidence(text)
+    body_urls = set(_BODY_URL_RE.findall(text))
+    avail_month = body.get("availabilityMonth")
     for e in rec["events"]:
         k = e["eventKey"]
         rd = e["retireDate"]
         if rd["precision"] != "unknown" and rd["source"] == "description" and not _in_body(rd["evidence"], body_norm):
             warnings.append(f"{k}: retireDate の根拠が取得済み本文に見つからないため unknown にした")
+            e["retireDate"] = {"precision": "unknown", "start": None, "end": None, "source": "none", "evidence": rd["evidence"]}
+        elif rd["precision"] != "unknown" and rd["source"] == "availability" and (
+                rd["precision"] != "month" or not avail_month or rd["start"][:7] != avail_month):
+            # An availability-sourced date is the month of the tool-fetched availabilities, never anything else.
+            warnings.append(f"{k}: retireDate（source=availability）が取得済みの availabilities の月と一致しないため unknown にした")
             e["retireDate"] = {"precision": "unknown", "start": None, "end": None, "source": "none", "evidence": rd["evidence"]}
         for f in FLAG_NAMES:
             if e["flags"][f] != "unknown" and not _in_body(e["flagEvidence"][f], body_norm):
@@ -324,7 +333,7 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
             rec = validate_notice(n, meta[nid], st["enumeration"]["allowedCategories"], warnings,
                                   required_via="ReleaseCommunicationsApi" if api_mode else None)
             if api_mode:
-                enforce_body_provenance(rec, bodies.get(nid, ""), warnings)
+                enforce_body_provenance(rec, bodies.get(nid, {}), warnings)
             rec["batchId"] = b["batchId"]
             ok[nid] = rec
         except ShardError as ex:

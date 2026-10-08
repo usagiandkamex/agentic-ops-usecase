@@ -24,7 +24,7 @@ applyTo: 'usecases/005-azure-retirement-report/**'
 ## 成果物の作り方（同梱ツールで決定論的に作る）
 
 - 列挙・完全性照合・重複候補のグループ化・バッチ化・シャード検証・統合・影響度判定・集計・`findings.json` / HTML / CSV / `progress.md` の書き出し・検証ゲートは、**レビュー済みの同梱ツール** [`tools/retirement_tool.py`](../../usecases/005-azure-retirement-report/tools/README.md)（Python 3 標準ライブラリのみ）のサブコマンドで行う。
-- **新しいスクリプト（Python / PowerShell / JavaScript 等）やインラインコードを作らない・実行しない**。端末で実行してよいのは同梱ツールのサブコマンドだけ。ツールが書くファイル（`findings.json` / HTML / CSV / `progress.md` / `.work/` 配下）を編集ツールで直接書き換えない（例外: ワーカーが自分のシャードを書く）。
+- **新しいスクリプト（Python / PowerShell / JavaScript 等）やインラインコードを作らない・実行しない**。端末で実行してよいのは同梱ツールのサブコマンドだけ。ツールが書くファイル（`findings.json` / HTML / CSV / `progress.md` / `.work/` 配下）を編集ツールで直接書き換えない（例外: ワーカーが自分のシャードを書く。オーケストレーターが総評を `.work/highlight.txt`、レビュー要約を `.work/review-note.txt` に書く）。総評・レビュー要約などレポート由来の自由記述は**コマンドラインの引数に入れない**（シェル解析によるコマンド注入を防ぐ）。
   - 001〜004 の「生成スクリプトを作らない」原則の **005 限定の例外**。理由: 005 は数百件の投稿を決定論的に統合・転記する処理が中心で、手作業の分割編集では完走できない（Issue #55）。例外はリポジトリでレビュー済みのツールに限り、実行時にコードを生成させない。
 - LLM が担うのは判断だけ: 収集範囲の確認と承認、本文からの抽出（ワーカー）、同一対象（sameTarget）の判定、総評、独立レビュー、完了報告。
 - **MRC MCP が使えない場合の本文取得**も同梱ツールで行う: `init --mrc-mcp unavailable` の実行では `next-wave` が公開 API から本文を取得してワーカーの入力ファイル（`notices[].body`）に入れ、**Web・MCP・端末を持たないオフラインワーカー**（[`azure-retirement-summarizer-offline`](../agents/005-retirement-summarizer-offline.agent.md)・`tools: [read, edit]`）が入力ファイルの本文だけから抽出する（`fetchedVia="ReleaseCommunicationsApi"`）。API だけを情報源とする境界はプロンプトではなく、ワーカーのツール構成（ネットワーク手段なし）と `check-shards` の照合（入力ファイルの改変検知・根拠と取得済み本文の一致・リンクは本文中の URL のみ）で担保する。詳細は [tools/README.md](../../usecases/005-azure-retirement-report/tools/README.md) の「本文の取得」。

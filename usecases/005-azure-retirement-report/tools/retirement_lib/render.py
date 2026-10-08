@@ -13,9 +13,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .common import (EMAIL_RE, PLACEHOLDER_RE, SAFELINKS_RE, TEMPLATE_DIR, RunLock, ToolError, clean_text,
-                     deep_unescape, html_escape, load_state, log, read_json, require_phase, save_state, url_violation,
-                     write_text)
+from .common import (EMAIL_RE, PLACEHOLDER_RE, REVIEW_NOTE_INPUT, SAFELINKS_RE, TEMPLATE_DIR, RunLock, ToolError,
+                     clean_text, deep_unescape, html_escape, load_state, log, read_json, read_text_input, require_phase,
+                     save_state, url_violation, write_text)
 from .merge import safety_findings, verify_findings
 
 FALLBACK_TEXT = "該当なし（対象期間のリタイア情報はありません）"
@@ -260,7 +260,7 @@ def cmd_render(args: Any, run: Path) -> dict:
     if not ok:
         raise ToolError("G4 failed", code=1, gates=gates)
     return {"run": st["runId"], "G4": gates, "indexHtml": str(run / "index.html"), "csv": str(run / "retirements.csv"),
-            "next": "独立レビュー（index.html を読み直して findings.json と矛盾しないか確認）を行い、record-review で結果を記録する"}
+            "next": "独立レビュー（index.html を読み直して findings.json と矛盾しないか確認）を行い、record-review で結果を記録する（要約を残す場合は先に編集ツールで .work/review-note.txt に書く）"}
 
 
 def cmd_verify(args: Any, run: Path) -> dict:
@@ -278,17 +278,18 @@ def cmd_verify(args: Any, run: Path) -> dict:
 
 def cmd_record_review(args: Any, run: Path) -> dict:
     from .progress import render_progress
-    note = clean_text(args.note, 500)
     with RunLock(run):
         st = load_state(run)
         require_phase(st, ("rendered", "reviewed"), "record-review")
         if st["gates"].get("G4", {}).get("status") != "pass":
             raise ToolError("G4 has not passed; run render first")
+        note = clean_text(read_text_input(run, REVIEW_NOTE_INPUT, required=False), 500)
         st["review"] = {"result": args.result, "note": note}
         st["phase"] = "reviewed" if args.result == "pass" else "rendered"
         log(st, "record-review", f"独立レビュー: {args.result}{'（' + note + '）' if note else ''}")
         save_state(run, st)
         write_text(run, "progress.md", render_progress(st))
+        (run / REVIEW_NOTE_INPUT).unlink(missing_ok=True)
     nxt = f"finalize --run {st['runId']}" if args.result == "pass" else "指摘を修正（必要なら merge / set-highlight / render をやり直す）してから再レビューする"
     return {"run": st["runId"], "review": st["review"], "next": nxt}
 

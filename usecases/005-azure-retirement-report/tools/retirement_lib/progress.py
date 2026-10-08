@@ -36,7 +36,7 @@ def next_action(st: dict) -> str:
     if p == "collected":
         return f"merge --run {run}"
     if p == "merged":
-        return f"総評を書いて set-highlight --run {run} --text \"...\""
+        return f"総評を編集ツールで .work/highlight.txt に書いて set-highlight --run {run}"
     if p == "highlighted":
         return f"report-writer に委譲: render --run {run} → 独立レビュー"
     if p == "rendered":
