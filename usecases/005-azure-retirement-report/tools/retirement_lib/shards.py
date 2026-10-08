@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,13 @@ IMPACT_TYPES = {"ServiceRetirement", "SkuRetirement", "VersionRetirement", "Feat
 CLASS_STATUSES = {"confirmed", "ambiguous", "insufficientEvidence"}
 REMEDIATION_STATUSES = {"explicit", "supplementedByLearn", "notFound"}
 FLAG_NAMES = ("workloadStop", "dataLossRisk", "autoMigration")
-LEARN_VALUES = {"available", "unavailable", "notUsed"}
+LEARN_VALUES = {"available", "fallbackGet", "unavailable", "notUsed"}
+# Manifest values whose Learn-derived links are kept (Learn MCP, or direct GET only when MCP is unavailable).
+LEARN_KEEP = {"available", "fallbackGet"}
+# Values meaning some events needing a Learn supplement could not get a full one (GET fallback is capped / links only).
+LEARN_PARTIAL = {"fallbackGet", "unavailable"}
+LEARN_CAPABILITY_FALLBACK = "不可（直接取得で補完）"
+LEARN_HOST = "learn.microsoft.com"
 FETCHED_VIA = ("MRC MCP", "ReleaseCommunicationsApi")
 
 
@@ -63,17 +70,32 @@ def _prefetched_bodies(run: Path, b: dict) -> dict:
     return out
 
 
+def learn_capability(learns: list[str]) -> str:
+    """Run-level Learn capability from the accepted batches' manifest values (MCP use takes precedence)."""
+    if "available" in learns:
+        return "利用可"
+    if "fallbackGet" in learns:
+        return LEARN_CAPABILITY_FALLBACK
+    return "不可" if "unavailable" in learns else "未使用"
+
+
+def _drop_learn_remediation(rec: dict, learn: str, warnings: list[str]) -> None:
+    """Learn-derived remediation steps need a Learn page read through Learn MCP (the GET fallback only adds links)."""
+    for e in rec["events"]:
+        if e["remediationStatus"] == "supplementedByLearn":
+            warnings.append(f"{e['eventKey']}: learnMcp={learn} のため remediationStatus を notFound にした")
+            e["remediationStatus"], e["remediationJa"] = "notFound", []
+
+
 def _drop_learn_outputs(rec: dict, learn: str, warnings: list[str]) -> None:
-    """A shard that did not use Learn MCP must not carry Learn-derived links or remediation."""
+    """A shard that did not use Learn (MCP or the GET fallback) must not carry Learn-derived links or remediation."""
     for e in rec["events"]:
         k = e["eventKey"]
         kept = [l for l in e["referenceLinks"] if l["source"] != "LearnSearch"]
         if len(kept) != len(e["referenceLinks"]):
             warnings.append(f"{k}: learnMcp={learn} のため Learn 補完のリンクを除外した")
             e["referenceLinks"] = kept
-        if e["remediationStatus"] == "supplementedByLearn":
-            warnings.append(f"{k}: learnMcp={learn} のため remediationStatus を notFound にした")
-            e["remediationStatus"], e["remediationJa"] = "notFound", []
+    _drop_learn_remediation(rec, learn, warnings)
 
 
 def enforce_body_provenance(rec: dict, body: dict, warnings: list[str]) -> None:
@@ -183,9 +205,12 @@ def _links(v: Any) -> list[dict]:
         url = normalize_link(l.get("url"))
         if not url or url in seen:
             continue
+        source = l.get("source") if l.get("source") in ("Description", "LearnSearch") else "Description"
+        if source == "LearnSearch" and urllib.parse.urlsplit(url).hostname != LEARN_HOST:
+            # A Learn supplement must point to Microsoft Learn itself, whichever way it was found (MCP or GET fallback).
+            continue
         seen.add(url)
-        out.append({"titleJa": clean_text(l.get("titleJa"), 200) or url, "url": url,
-                    "source": l.get("source") if l.get("source") in ("Description", "LearnSearch") else "Description",
+        out.append({"titleJa": clean_text(l.get("titleJa"), 200) or url, "url": url, "source": source,
                     "learnQuery": clean_text(l.get("learnQuery"), 200)})
     return out[:7]
 
@@ -330,9 +355,9 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
         learn = sh.get("learnMcp")
         if learn not in LEARN_VALUES:
             # Required manifest field: it decides the run's Learn provenance, so a missing / invalid value is malformed.
-            raise ShardError('learnMcp must be "available", "unavailable" or "notUsed"')
+            raise ShardError('learnMcp must be "available", "fallbackGet", "unavailable" or "notUsed"')
         if api_mode and learn != "notUsed":
-            # The offline worker profile has no Learn MCP; any other claim is not trusted.
+            # The offline worker profile has no network (no Learn MCP, no GET); any other claim is not trusted.
             warnings.append(f"learnMcp={learn} は MRC MCP 不可の実行（オフラインワーカー）では使えないため notUsed とした")
             learn = "notUsed"
     except (ShardError, ValueError, OSError) as ex:
@@ -351,8 +376,10 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
                                   required_via="ReleaseCommunicationsApi" if api_mode else None)
             if api_mode:
                 enforce_body_provenance(rec, bodies.get(nid, {}), warnings)
-            elif learn != "available":
+            elif learn not in LEARN_KEEP:
                 _drop_learn_outputs(rec, learn, warnings)
+            elif learn == "fallbackGet":
+                _drop_learn_remediation(rec, learn, warnings)
             rec["batchId"] = b["batchId"]
             ok[nid] = rec
         except ShardError as ex:
@@ -463,8 +490,11 @@ def cmd_check_shards(args: Any, run: Path) -> dict:
             okc = [i for i in cand if ns[i]["status"] == "ok"]
             ex = [i for i in cand if ns[i]["status"] == "exhausted"]
             g2 = len(okc) + len(ex) == len(cand)
-            learns = [b["learnMcp"] for b in st["batches"] if b["learnMcp"]]
-            st["capabilities"]["learnMcp"] = ("利用可" if "available" in learns else "不可" if "unavailable" in learns else "未使用")
+            # Only batches whose records were finally accepted decide the run's Learn provenance (not superseded attempts).
+            effective = {accepted[i]["batchId"] for i in okc if i in accepted}
+            learns = [b["learnMcp"] for b in st["batches"] if b["batchId"] in effective and b["learnMcp"]]
+            st["capabilities"]["learnMcp"] = learn_capability(learns)
+            st["learnSupplementIncomplete"] = any(x in LEARN_PARTIAL for x in learns)
             st["gates"]["G2"] = {"status": "pass" if g2 else "fail", "returned": len(okc), "failed": ex}
             if g2:
                 st["phase"] = "collected"

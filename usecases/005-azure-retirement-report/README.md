@@ -21,7 +21,7 @@ HTML 上で **カテゴリ（Compute / Databases 等）・製品（リソース�
 
 - **Azure の権限・認証は不要**（Azure リソース・サブスクリプションへはアクセスしない）。
 - **Microsoft Release Communications（MRC）MCP サーバ**（推奨・認証不要）。[.vscode/mcp.json](../../.vscode/mcp.json) に `Microsoft Release Communications` として定義済み。ワーカーが本文の取得に使う（利用できない場合は、同梱ツールの `next-wave` が Azure Updates と同一データ源の公開 API `https://www.microsoft.com/releasecommunications/api/v2/azure` から本文を取得し、ネットワークを持たないオフラインワーカーが抽出する。この場合 Learn MCP による対応策の補完は行わない）。
-- **Microsoft Learn MCP サーバ**（任意・認証不要）。対応策の補完に使う。[.vscode/mcp.json](../../.vscode/mcp.json) に `Microsoft Learn` として定義済み（無くても動作する）。
+- **Microsoft Learn MCP サーバ**（推奨・認証不要）。対応策の補完で Learn の情報・リンクを取得するのに使う（`microsoft_docs_search` / `microsoft_docs_fetch`）。[.vscode/mcp.json](../../.vscode/mcp.json) に `Microsoft Learn` として定義済み。無くても動作するが、その場合はワーカーが `learn.microsoft.com` の検索 API を上限付きで直接 GET する（多用すると `Too Many Requests` になるため、Learn MCP の利用を推奨）。
 - インターネット（`www.microsoft.com` / `learn.microsoft.com`）への HTTPS 接続。列挙・件数照合には公開 API への接続が必須。
 - VS Code + GitHub Copilot 拡張機能、**Python 3.9 以降**（同梱ツール [`tools/retirement_tool.py`](tools/README.md) の実行に使用・標準ライブラリのみで追加パッケージ不要）。
 

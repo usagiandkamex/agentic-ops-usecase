@@ -11,7 +11,7 @@
 - 実行フォルダ: usecases/005-azure-retirement-report/reports/<YYYYMMDD-HHmmss>/
 - 開始(JST): <START_DATETIME> ／ 基準日(JST): <AS_OF_DATE> ／ 最終更新(JST): <UPDATED_DATETIME>
 - 収集範囲: <SCOPE_LABEL>
-- 収集能力: MRC MCP=<利用可|不可> ／ 公開 API=利用可 ／ Learn MCP=<未判定|利用可|不可|未使用>
+- 収集能力: MRC MCP=<利用可|不可> ／ 公開 API=利用可 ／ Learn MCP=<未判定|利用可|不可（直接取得で補完）|不可|未使用>
 - 現在地: planned ／ 次アクション: next-wave --run <YYYYMMDD-HHmmss>
 
 ## 安全性

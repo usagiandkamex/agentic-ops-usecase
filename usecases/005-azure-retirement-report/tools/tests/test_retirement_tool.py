@@ -155,7 +155,7 @@ class Pipeline(unittest.TestCase):
         self.created.append(run)
         return out["run"], run
 
-    def simulate(self, run, spec):
+    def simulate(self, run, spec, learn="notUsed"):
         """spec(nid, attempt, inp) -> notice dict | None (fetch failure) | 'raw' (to write raw shard text)."""
         st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
         for b in st["batches"]:
@@ -171,16 +171,17 @@ class Pipeline(unittest.TestCase):
                 else:
                     ret.append(nid)
                     notices.append(n)
-            shard = {"batchId": b["batchId"], "attempt": inp["attempt"], "asOfDate": inp["asOfDate"], "learnMcp": "notUsed",
+            shard = {"batchId": b["batchId"], "attempt": inp["attempt"], "asOfDate": inp["asOfDate"],
+                     "learnMcp": learn(b["batchId"]) if callable(learn) else learn,
                      "expectedNoticeIds": ids, "returnedNoticeIds": ret, "failedNoticeIds": fail, "notices": notices}
             Path(inp["shardPath"]).write_text(json.dumps(shard, ensure_ascii=False), encoding="utf-8")
 
-    def drive(self, run_name, run, spec, max_waves=20):
+    def drive(self, run_name, run, spec, max_waves=20, learn="notUsed"):
         for _ in range(max_waves):
             w = self.tool("next-wave", "--run", run_name)
             if not w["dispatch"]:
                 break
-            self.simulate(run, spec)
+            self.simulate(run, spec, learn=learn)
             c = self.tool("check-shards", "--run", run_name)
             if c.get("G2"):
                 return c
@@ -651,6 +652,82 @@ class Pipeline(unittest.TestCase):
         st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
         self.assertTrue(all(b["learnMcp"] in (None, "notUsed") for b in st["batches"]))
 
+    def test_learn_fallback_get_is_kept_and_reported(self):
+        name, run = self._plan_all()
+        learn_link = {"titleJa": "Learn", "url": "https://learn.microsoft.com/azure/bar", "source": "LearnSearch",
+                      "learnQuery": "foo retirement migration"}
+
+        def spec(nid, attempt, inp):
+            e = ev(nid, "2027-01-01", links=[learn_link])
+            e["remediationStatus"] = "supplementedByLearn"
+            return {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP", "titleJa": "x", "events": [e]}
+        c = self.drive(name, run, spec, learn="fallbackGet")
+        self.assertEqual(c["G2"]["status"], "pass")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(st["capabilities"]["learnMcp"], shards.LEARN_CAPABILITY_FALLBACK)
+        self.assertTrue(all(b["learnMcp"] == "fallbackGet" for b in st["batches"]))
+        self.assertTrue(st["learnSupplementIncomplete"])
+        self.tool("merge", "--run", name)
+        f = json.loads((run / "findings.json").read_text(encoding="utf-8"))
+        self.assertEqual(f["metadata"]["capabilities"]["learnMcp"], shards.LEARN_CAPABILITY_FALLBACK)
+        # The GET fallback only adds links: Learn-derived remediation steps are not kept.
+        self.assertTrue(f["events"] and all(x["remediationStatus"] == "notFound" for x in f["events"]))
+        self.assertTrue(all([l["source"] for l in x["referenceLinks"]] == ["LearnSearch"] for x in f["events"]))
+        plan = next(p for p in f["collectionPlan"] if p["task"] == "Remediation:learnSupplement")
+        self.assertEqual(plan["status"], "downgraded")
+        self.assertEqual(plan["evidence"]["resultCount"], len(f["events"]))
+
+    def test_learn_capability_uses_only_accepted_attempts(self):
+        name, run = self._plan_all()
+        ok = lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP", "titleJa": "x",
+                                        "events": [ev(nid, "2027-01-01")]}
+        self.tool("next-wave", "--run", name)
+        self.simulate(run, lambda nid, attempt, inp: None, learn="available")  # first attempts all fail
+        self.tool("check-shards", "--run", name)
+        c = self.drive(name, run, ok, learn="fallbackGet")
+        self.assertEqual(c["G2"]["status"], "pass")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertIn("available", [b["learnMcp"] for b in st["batches"]])
+        self.assertEqual(st["capabilities"]["learnMcp"], shards.LEARN_CAPABILITY_FALLBACK)
+
+    def test_partial_learn_failure_downgrades_the_supplement_task(self):
+        name, run = self._plan_all()
+        first: list[str] = []
+
+        def learn(batch_id):
+            if not first:
+                first.append(batch_id)
+            return "available" if batch_id == first[0] else "unavailable"
+        c = self.drive(name, run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP",
+                                                              "titleJa": "x", "events": [ev(nid, "2027-01-01")]}, learn=learn)
+        self.assertEqual(c["G2"]["status"], "pass")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertGreater(len(st["batches"]), 1)
+        self.assertEqual(st["capabilities"]["learnMcp"], "利用可")
+        self.assertTrue(st["learnSupplementIncomplete"])
+        self.tool("merge", "--run", name)
+        f = json.loads((run / "findings.json").read_text(encoding="utf-8"))
+        plan = next(p for p in f["collectionPlan"] if p["task"] == "Remediation:learnSupplement")
+        self.assertEqual(plan["status"], "downgraded")
+        self.assertIn("補完不可", plan["evidence"]["note"])
+
+    def test_api_mode_forces_learn_fallback_to_not_used(self):
+        name, run, w, d = self._api_wave()
+
+        def spec(nid, attempt, inp):
+            e = ev(nid, "2027-03-01", links=[{"titleJa": "y", "url": "https://learn.microsoft.com/azure/bar", "source": "LearnSearch"}])
+            e["remediationStatus"] = "supplementedByLearn"
+            return {"id": nid, "fetchStatus": "ok", "fetchedVia": "ReleaseCommunicationsApi", "titleJa": "x", "events": [e]}
+        self.simulate(run, spec, learn="fallbackGet")
+        self.tool("check-shards", "--run", name)
+        acc = json.loads((run / ".work" / "accepted.json").read_text(encoding="utf-8"))
+        self.assertTrue(acc)
+        for rec in acc.values():
+            e = rec["events"][0]
+            self.assertEqual((e["referenceLinks"], e["remediationStatus"]), ([], "notFound"))
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(b["learnMcp"] in (None, "notUsed") for b in st["batches"]))
+
     def test_api_mode_rejects_modified_input(self):
         name, run, w, d = self._api_wave()
         inp = Path(d["inputPath"])
@@ -842,6 +919,38 @@ class ReviewRegressions(unittest.TestCase):
         e = ok["a"]["events"][0]
         self.assertEqual((len(e["referenceLinks"]), e["remediationStatus"], learn), (2, "supplementedByLearn", "available"))
         self.assertFalse(warn)
+        ok, _, warn, learn = self.shard(dict(base, notices=notices, learnMcp="fallbackGet"))
+        e = ok["a"]["events"][0]
+        self.assertEqual(([l["source"] for l in e["referenceLinks"]], e["remediationStatus"], e["remediationJa"], learn),
+                         (["Description", "LearnSearch"], "notFound", [], "fallbackGet"))
+        self.assertEqual(len(warn), 1)
+        ok, _, warn, learn = self.shard(dict(base, notices=notices, learnMcp="unavailable"))
+        e = ok["a"]["events"][0]
+        self.assertEqual(([l["source"] for l in e["referenceLinks"]], e["remediationStatus"], learn),
+                         (["Description"], "notFound", "unavailable"))
+        self.assertEqual(len(warn), 2)
+
+    def test_learn_search_links_must_point_to_learn(self):
+        ids = ["a", "b", "c", "d"]
+        a = self.n("a")
+        a["events"][0]["referenceLinks"] = [
+            {"titleJa": "ok", "url": "https://learn.microsoft.com/azure/bar", "source": "LearnSearch"},
+            {"titleJa": "other", "url": "https://azure.microsoft.com/updates/x", "source": "LearnSearch"},
+            {"titleJa": "desc", "url": "https://azure.microsoft.com/updates/y", "source": "Description"}]
+        base = {"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids, "failedNoticeIds": [],
+                "notices": [a] + [self.n(i) for i in ids[1:]]}
+        ok, fail, _, _ = self.shard(dict(base, learnMcp="fallbackGet"))
+        self.assertFalse(fail)
+        self.assertEqual([l["url"] for l in ok["a"]["events"][0]["referenceLinks"]],
+                         ["https://learn.microsoft.com/azure/bar", "https://azure.microsoft.com/updates/y"])
+
+    def test_learn_capability_aggregation(self):
+        cap = shards.learn_capability
+        self.assertEqual(cap([]), "未使用")
+        self.assertEqual(cap(["notUsed"]), "未使用")
+        self.assertEqual(cap(["notUsed", "unavailable"]), "不可")
+        self.assertEqual(cap(["unavailable", "fallbackGet", "notUsed"]), shards.LEARN_CAPABILITY_FALLBACK)
+        self.assertEqual(cap(["fallbackGet", "available", "unavailable"]), "利用可")
 
     def n(self, i, same=None):
         return {"id": i, "fetchStatus": "ok", "fetchedVia": "MRC MCP", "titleJa": "x", "events": [ev(i, "2027-01-01", same=same)]}

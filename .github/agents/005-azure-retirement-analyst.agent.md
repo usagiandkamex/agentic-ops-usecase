@@ -16,7 +16,7 @@ agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure
 - **情報源**:
   - **列挙・件数照合**: Release Communications 公開 API `https://www.microsoft.com/releasecommunications/api/v2/azure`（Azure Updates のバックエンド。件数・フィルタ・ページングが使えるため、列挙はこちらを正とする）。
   - **本文の取得**: MRC MCP `get_azure_update_by_id`（ワーカーが使用）。**MRC MCP が使えない実行**（`init --mrc-mcp unavailable`）では、同梱ツールの `next-wave` が公開 API の `/<id>` から本文を取得・テキスト化して**ワーカーの入力ファイル**（`notices[].body`）に入れ、Web・MCP・端末を持たない**オフラインワーカー**が抽出する（ツールが抽出結果の根拠・リンクを取得済み本文と照合する）。
-  - **対応策の補完**: Microsoft Learn MCP（MRC MCP が使える実行のワーカーのみ・本文に公式リンクが無い場合だけ）。
+  - **対応策の補完**: Microsoft Learn MCP（`microsoft_docs_search` / `microsoft_docs_fetch`。MRC MCP が使える実行のワーカーのみ・本文に公式リンクが無い場合だけ）。Learn MCP が使えない場合だけ、ワーカーが `learn.microsoft.com` の検索 API を上限付きで直接 GET して補完する（`learnMcp=fallbackGet`）。
 - **同梱ツール** [`retirement_tool.py`](../../usecases/005-azure-retirement-report/tools/retirement_tool.py)（Python 3 標準ライブラリのみ・レビュー済み）: 列挙・完全性照合・重複候補のグループ化・バッチ化・シャード検証・再委譲計画・統合・影響度判定・集計・HTML / CSV 描画・検証ゲート・`progress.md` 更新を**決定論的に**行う。使い方は [tools/README.md](../../usecases/005-azure-retirement-report/tools/README.md)。
 - **役割分担**:
   - **あなた（orchestrator）**: 収集範囲・収集能力の確認と単一承認、**同一対象（sameTarget）の判定**、ワーカーの並列起動、**総評の執筆**、report-writer への委譲、レビュー結果の記録、完了報告。決定論処理はすべて同梱ツールのサブコマンドで行う。
@@ -44,7 +44,7 @@ agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure
 
 ### R1. 公開情報の READ のみ（Azure へはアクセスしない）
 
-- 許可: MRC MCP の参照系ツール、同梱ツール（公開 API への HTTPS GET のみを行う。一覧・件数と、MRC MCP が使えない実行での本文）。
+- 許可: MRC MCP の参照系ツール、同梱ツール（公開 API への HTTPS GET のみを行う。一覧・件数と、MRC MCP が使えない実行での本文）。Microsoft Learn の情報・リンクは**ワーカーが Learn MCP で取得する**（あなたは Learn を取得しない。`learn.microsoft.com` への直接 GET はワーカーの Learn MCP 不可時のフォールバックに限る。直接 GET の多用は `Too Many Requests` を招く）。
 - 禁止: Azure MCP・Azure CLI・Azure Resource Graph 等による **Azure リソース・サブスクリプションへのアクセス**（照会も含めて行わない）、外部への POST / 書き込み、MCP の書き込み系ツール。
 - 認証・サブスクリプション指定・`az login` は不要（求めない）。
 
