@@ -4,7 +4,8 @@
 Agents run only these subcommands; they must not write or run any other script.
 Every subcommand prints one JSON object (with a "next" hint) to stdout.
 Exit codes: 0 = ok, 1 = gate failed, 2 = usage / state error, 3 = network error.
-Python 3.9+ standard library only. Network: HTTPS GET to the Release Communications API only.
+Python 3.9+ standard library only. Network: HTTPS GET to the Release Communications API, and (only `learn-fallback`,
+serially and rate-limited) to the Microsoft Learn search API https://learn.microsoft.com/api/search.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from retirement_lib import api, merge, plan, progress, render, shards  # noqa: E402
+from retirement_lib import api, learn, merge, plan, progress, render, shards  # noqa: E402
 from retirement_lib.common import TOOL_VERSION, ToolError, resolve_run  # noqa: E402
 
 
@@ -58,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     q = run_cmd("next-wave", "step 5: dispatch the next wave of worker batches")
     q.add_argument("--max", type=int, default=6)
     run_cmd("check-shards", "step 5: validate worker shards, plan retries (G2)")
+    run_cmd("learn-fallback", "step 5: serve workers' Learn search requests serially (only when Learn MCP was unavailable)")
     run_cmd("merge", "step 6: merge, score and aggregate into findings.json (G3)")
     run_cmd("set-highlight", "step 6: record the summary text written to <run>/.work/highlight.txt")
     run_cmd("render", "step 7: render index.html / retirements.csv and run the report gates (G4)")
@@ -77,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "enumerate": api.cmd_enumerate, "record-same-target": plan.cmd_record_same_target,
         "plan-batches": plan.cmd_plan_batches, "next-wave": plan.cmd_next_wave, "check-shards": shards.cmd_check_shards,
+        "learn-fallback": learn.cmd_learn_fallback,
         "merge": merge.cmd_merge, "set-highlight": merge.cmd_set_highlight, "render": render.cmd_render,
         "verify": render.cmd_verify, "record-review": render.cmd_record_review, "finalize": render.cmd_finalize,
     }

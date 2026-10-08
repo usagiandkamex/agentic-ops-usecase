@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import http.client
 import io
 import json
 import os
@@ -21,7 +22,7 @@ TOOLS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOLS))
 
 import retirement_tool  # noqa: E402
-from retirement_lib import api, common, merge, plan, progress, render, shards  # noqa: E402
+from retirement_lib import api, common, learn, merge, plan, progress, render, shards  # noqa: E402
 
 AS_OF = "2026-10-07"
 FIXED_NOW = dt.datetime(1999, 1, 1, 0, 0, 0, tzinfo=common.JST)
@@ -155,7 +156,7 @@ class Pipeline(unittest.TestCase):
         self.created.append(run)
         return out["run"], run
 
-    def simulate(self, run, spec):
+    def simulate(self, run, spec, learn="notUsed", incomplete=False):
         """spec(nid, attempt, inp) -> notice dict | None (fetch failure) | 'raw' (to write raw shard text)."""
         st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
         for b in st["batches"]:
@@ -171,16 +172,18 @@ class Pipeline(unittest.TestCase):
                 else:
                     ret.append(nid)
                     notices.append(n)
-            shard = {"batchId": b["batchId"], "attempt": inp["attempt"], "asOfDate": inp["asOfDate"], "learnMcp": "notUsed",
+            shard = {"batchId": b["batchId"], "attempt": inp["attempt"], "asOfDate": inp["asOfDate"],
+                     "learnMcp": learn(b["batchId"]) if callable(learn) else learn,
+                     "learnIncomplete": incomplete(b["batchId"]) if callable(incomplete) else incomplete,
                      "expectedNoticeIds": ids, "returnedNoticeIds": ret, "failedNoticeIds": fail, "notices": notices}
             Path(inp["shardPath"]).write_text(json.dumps(shard, ensure_ascii=False), encoding="utf-8")
 
-    def drive(self, run_name, run, spec, max_waves=20):
+    def drive(self, run_name, run, spec, max_waves=20, learn="notUsed", incomplete=False):
         for _ in range(max_waves):
             w = self.tool("next-wave", "--run", run_name)
             if not w["dispatch"]:
                 break
-            self.simulate(run, spec)
+            self.simulate(run, spec, learn=learn, incomplete=incomplete)
             c = self.tool("check-shards", "--run", run_name)
             if c.get("G2"):
                 return c
@@ -471,11 +474,11 @@ class Pipeline(unittest.TestCase):
             for pf in ([["a"]], ["zz"], ["a", "a"], None, "a"):
                 b = {"batchId": "B01", "noticeIds": ids, "shardPath": ".work/s.json", "bodySource": "ReleaseCommunicationsApi",
                      "prefetchFailedNoticeIds": pf}
-                ok, fail, _, _ = shards.check_batch(tmp, st, b, meta, {})
+                ok, fail, _, _, _ = shards.check_batch(tmp, st, b, meta, {})
                 self.assertEqual(ok, {})
                 self.assertTrue(all(v.startswith("malformedInput") for v in fail.values()), pf)
             b = {"batchId": "B01", "noticeIds": ids, "shardPath": ".work/s.json", "bodySource": "MRC MCP", "prefetchFailedNoticeIds": ["a"]}
-            ok, fail, _, _ = shards.check_batch(tmp, dict(st, capabilities={"mrcMcp": "利用可"}), b, meta, {})
+            ok, fail, _, _, _ = shards.check_batch(tmp, dict(st, capabilities={"mrcMcp": "利用可"}), b, meta, {})
             self.assertTrue(all(v.startswith("malformedInput") for v in fail.values()))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -651,6 +654,216 @@ class Pipeline(unittest.TestCase):
         st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
         self.assertTrue(all(b["learnMcp"] in (None, "notUsed") for b in st["batches"]))
 
+    def _learn_fake(self, responses):
+        """responses(query, n) -> dict | LearnHttpError; records calls and waits."""
+        calls, waits = [], []
+
+        def fake(url):
+            p = urllib.parse.urlsplit(url)
+            assert p.scheme == "https" and p.hostname == learn.LEARN_HOST and p.path == learn.LEARN_SEARCH_PATH
+            q = dict(urllib.parse.parse_qsl(p.query))["search"]
+            calls.append(q)
+            r = responses(q, sum(1 for c in calls if c == q))
+            if isinstance(r, Exception):
+                raise r
+            return r
+        orig = (learn.http_get_learn, learn.sleep)
+        learn.http_get_learn, learn.sleep = fake, waits.append
+        self.addCleanup(lambda: setattr(learn, "http_get_learn", orig[0]) or setattr(learn, "sleep", orig[1]))
+        return calls, waits
+
+    def _drive_with_requests(self, learn_v="unavailable"):
+        name, run = self._plan_all()
+
+        def spec(nid, attempt, inp):
+            e = ev(nid, "2027-01-01", links=[])
+            e["remediationStatus"], e["remediationJa"] = "notFound", []
+            e["learnRequest"] = {"query": "Azure Foo v1 retirement migration" if nid.startswith("10") else f"Azure Bar {nid} retirement",
+                                 "keyTerms": ["Foo"] if nid.startswith("10") else ["Bar"]}
+            return {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP", "titleJa": "x", "events": [e]}
+        c = self.drive(name, run, spec, learn=learn_v)
+        return name, run, c
+
+    def test_learn_fallback_is_served_serially_by_the_tool(self):
+        good = {"results": [
+            {"title": "Migrate from Foo v1 before retirement", "url": "https://learn.microsoft.com/azure/foo/migrate", "description": "Foo v1 retires."},
+            {"title": "Foo overview", "url": "https://learn.microsoft.com/azure/foo/overview", "description": "About Foo."},
+            {"title": "Foo v1 retirement (blog)", "url": "https://techcommunity.microsoft.com/foo", "description": "Foo retirement"},
+            {"title": "Foo v1 deprecation FAQ", "url": "https://learn.microsoft.com/azure/foo/faq", "description": ""},
+            {"title": "Foo v1 end of support", "url": "https://learn.microsoft.com/azure/foo/eos", "description": ""}]}
+        calls, waits = self._learn_fake(lambda q, n: good if "Foo" in q else {"results": []})
+        name, run, c = self._drive_with_requests()
+        self.assertIn("learn-fallback", c["next"])
+        self.assertGreater(c["learnRequests"], 0)
+        self.tool("merge", "--run", name, expect=2)  # pending requests block merge
+        self.assertIn("learn-fallback", self.tool("status", "--run", name)["next"])
+        out = self.tool("learn-fallback", "--run", name)
+        # One request per distinct query (the ten Foo notices share one query), paced by the minimum interval.
+        self.assertEqual(len(calls), len(set(calls)))
+        self.assertEqual(out["learnFallback"]["searches"], len(calls))
+        self.assertEqual(waits, [learn.MIN_INTERVAL_SEC] * (len(calls) - 1))
+        self.assertEqual(out["capabilities"]["learnMcp"], learn.LEARN_CAPABILITY_FALLBACK)
+        self.tool("merge", "--run", name)
+        f = json.loads((run / "findings.json").read_text(encoding="utf-8"))
+        foo = next(x for x in f["events"] if x["eventId"] == "100-1" or x["eventId"] == "100")
+        self.assertEqual([l["url"] for l in foo["referenceLinks"]],
+                         ["https://learn.microsoft.com/azure/foo/migrate", "https://learn.microsoft.com/azure/foo/faq"])
+        self.assertTrue(all(l["source"] == "LearnSearch" and l["learnQuery"] for l in foo["referenceLinks"]))
+        self.assertTrue(all(x["remediationStatus"] == "notFound" for x in f["events"]))  # links only
+        plan = next(p for p in f["collectionPlan"] if p["task"] == "Remediation:learnSupplement")
+        self.assertEqual(plan["status"], "downgraded")
+        self.assertIn("learn-fallback", plan["evidence"]["note"])
+        self.assertEqual(f["metadata"]["capabilities"]["learnMcp"], learn.LEARN_CAPABILITY_FALLBACK)
+
+    def test_learn_fallback_honors_retry_after_and_stops_on_persistent_429(self):
+        err = lambda ra: learn.LearnHttpError(429, ra, "HTTP 429")
+        calls, waits = self._learn_fake(lambda q, n: err("3") if n == 1 else {"results": []})
+        name, run, _ = self._drive_with_requests()
+        self.tool("learn-fallback", "--run", name)
+        self.assertIn(3.0, waits)  # Retry-After honored
+        self.assertTrue(all(c == 2 for c in (calls.count(q) for q in set(calls))))  # one 429 then success per query
+        name2, run2, _ = self._drive_with_requests()
+        calls.clear()
+        waits.clear()
+        self._learn_fake(lambda q, n: err("999"))
+        out = self.tool("learn-fallback", "--run", name2)
+        st = json.loads((run2 / ".work" / "state.json").read_text(encoding="utf-8"))
+        items = st["learnFallback"]["items"]
+        self.assertTrue(items and all(x["status"] == "stopped" for x in items))
+        self.assertEqual(out["learnFallback"]["searches"], 1)  # circuit breaker: no further queries
+        self.assertIn("429", out["learnFallback"]["stoppedReason"])
+        self.assertEqual(st["capabilities"]["learnMcp"], "不可")
+        self.tool("merge", "--run", name2)  # stopped requests do not block the report
+
+    def test_learn_fallback_cap_and_rerun(self):
+        calls, _ = self._learn_fake(lambda q, n: {"results": []})
+        name, run, _ = self._drive_with_requests()
+        orig = learn.MAX_SEARCHES
+        learn.MAX_SEARCHES = 1
+        try:
+            self.tool("learn-fallback", "--run", name)
+            st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+            items = st["learnFallback"]["items"]
+            queries = {x["query"] for x in items}
+            self.assertGreater(len(queries), 1)
+            self.assertIn("capped", {x["status"] for x in items})
+            for _ in range(len(queries) - 1):
+                self.tool("learn-fallback", "--run", name)  # each re-run serves the remaining requests
+        finally:
+            learn.MAX_SEARCHES = orig
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(calls), sorted(queries))  # one search per distinct query in total
+        self.assertEqual({x["status"] for x in st["learnFallback"]["items"]}, {"noMatch"})
+
+    def test_no_learn_requests_skips_learn_fallback(self):
+        name, run = self._plan_all()
+        c = self.drive(name, run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP",
+                                                              "titleJa": "x", "events": [ev(nid, "2027-01-01")]})
+        self.assertTrue(c["next"].startswith("merge"))
+        self.assertEqual(self.tool("learn-fallback", "--run", name)["learnFallback"]["status"], "notNeeded")
+        self.tool("merge", "--run", name)
+
+    def test_learn_url_guard(self):
+        learn._check_learn_url(learn.search_url("Azure Foo retirement"))
+        for bad in ("https://learn.microsoft.com/azure/foo", "http://learn.microsoft.com/api/search?search=x",
+                    "https://evil.example/api/search", "https://learn.microsoft.com.evil/api/search"):
+            with self.assertRaises(common.ToolError):
+                learn._check_learn_url(bad)
+
+    def test_learn_capability_uses_only_accepted_attempts(self):
+        name, run = self._plan_all()
+        ok = lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP", "titleJa": "x",
+                                        "events": [ev(nid, "2027-01-01")]}
+        self.tool("next-wave", "--run", name)
+        self.simulate(run, lambda nid, attempt, inp: None, learn="available")  # first attempts all fail
+        self.tool("check-shards", "--run", name)
+        c = self.drive(name, run, ok, learn="unavailable")
+        self.assertEqual(c["G2"]["status"], "pass")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertIn("available", [b["learnMcp"] for b in st["batches"]])
+        self.assertEqual(st["capabilities"]["learnMcp"], "不可")
+
+    def test_partial_learn_failure_downgrades_the_supplement_task(self):
+        name, run = self._plan_all()
+        first: list[str] = []
+
+        def learn(batch_id):
+            if not first:
+                first.append(batch_id)
+            return "available" if batch_id == first[0] else "unavailable"
+        c = self.drive(name, run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP",
+                                                              "titleJa": "x", "events": [ev(nid, "2027-01-01")]}, learn=learn)
+        self.assertEqual(c["G2"]["status"], "pass")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertGreater(len(st["batches"]), 1)
+        self.assertEqual(st["capabilities"]["learnMcp"], "利用可")
+        self.assertTrue(st["learnSupplementIncomplete"])
+        self.tool("merge", "--run", name)
+        f = json.loads((run / "findings.json").read_text(encoding="utf-8"))
+        plan = next(p for p in f["collectionPlan"] if p["task"] == "Remediation:learnSupplement")
+        self.assertEqual(plan["status"], "downgraded")
+        self.assertIn("補完不可", plan["evidence"]["note"])
+
+    def test_mcp_and_fallback_mixed_in_one_batch_downgrades(self):
+        # One batch used Learn MCP for one event and fell back to GET for another: learnMcp stays "available"
+        # (MCP-derived remediation is kept) while learnIncomplete reports the partial supplement.
+        name, run = self._plan_all()
+        first: list[str] = []
+
+        def incomplete(batch_id):
+            if not first:
+                first.append(batch_id)
+            return batch_id == first[0]
+
+        def spec(nid, attempt, inp):
+            e = ev(nid, "2027-01-01", links=[{"titleJa": "Learn", "url": "https://learn.microsoft.com/azure/bar",
+                                              "source": "LearnSearch", "learnQuery": "q"}])
+            e["remediationStatus"] = "supplementedByLearn"
+            return {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP", "titleJa": "x", "events": [e]}
+        c = self.drive(name, run, spec, learn="available", incomplete=incomplete)
+        self.assertEqual(c["G2"]["status"], "pass")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(b["learnMcp"] == "available" for b in st["batches"]))
+        self.assertEqual(sum(1 for b in st["batches"] if b["learnIncomplete"]), 1)
+        self.assertEqual(st["capabilities"]["learnMcp"], "利用可")
+        self.assertTrue(st["learnSupplementIncomplete"])
+        self.tool("merge", "--run", name)
+        f = json.loads((run / "findings.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(x["remediationStatus"] == "supplementedByLearn" for x in f["events"]))
+        plan = next(p for p in f["collectionPlan"] if p["task"] == "Remediation:learnSupplement")
+        self.assertEqual(plan["status"], "downgraded")
+
+    def test_complete_learn_mcp_run_is_done(self):
+        name, run = self._plan_all()
+        c = self.drive(name, run, lambda nid, attempt, inp: {"id": nid, "fetchStatus": "ok", "fetchedVia": "MRC MCP",
+                                                              "titleJa": "x", "events": [ev(nid, "2027-01-01")]},
+                       learn="available", incomplete=False)
+        self.assertEqual(c["G2"]["status"], "pass")
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertFalse(st["learnSupplementIncomplete"])
+        self.tool("merge", "--run", name)
+        f = json.loads((run / "findings.json").read_text(encoding="utf-8"))
+        plan = next(p for p in f["collectionPlan"] if p["task"] == "Remediation:learnSupplement")
+        self.assertEqual(plan["status"], "done")
+
+    def test_api_mode_drops_learn_outputs_and_requests(self):
+        name, run, w, d = self._api_wave()
+
+        def spec(nid, attempt, inp):
+            e = ev(nid, "2027-03-01", links=[{"titleJa": "y", "url": "https://learn.microsoft.com/azure/bar", "source": "LearnSearch"}])
+            e["remediationStatus"] = "supplementedByLearn"
+            e["learnRequest"] = {"query": "Azure Foo retirement", "keyTerms": ["Foo"]}
+            return {"id": nid, "fetchStatus": "ok", "fetchedVia": "ReleaseCommunicationsApi", "titleJa": "x", "events": [e]}
+        self.simulate(run, spec, learn="unavailable")
+        self.tool("check-shards", "--run", name)
+        acc = json.loads((run / ".work" / "accepted.json").read_text(encoding="utf-8"))
+        self.assertTrue(acc)
+        for rec in acc.values():
+            e = rec["events"][0]
+            self.assertEqual((e["referenceLinks"], e["remediationStatus"], e["learnRequest"]), ([], "notFound", None))
+        st = json.loads((run / ".work" / "state.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(b["learnMcp"] in (None, "notUsed") for b in st["batches"]))
+
     def test_api_mode_rejects_modified_input(self):
         name, run, w, d = self._api_wave()
         inp = Path(d["inputPath"])
@@ -720,6 +933,21 @@ class ApiResponses(unittest.TestCase):
         for resp in (self._Resp("text/html", b"<html>"), self._Resp("application/json", b"\xff\xfe\x00bad"),
                      self._Resp("application/json", b"{not json"), self._Resp("application/json", b"{}", status=203)):
             self.assertEqual(self._with(resp).code, 3)
+
+    def test_learn_truncated_body_is_learn_http_error(self):
+        class Truncated(self._Resp):
+            def read(self, n=-1):
+                raise http.client.IncompleteRead(b"{", 10)
+
+        orig = learn._OPENER
+        learn._OPENER = type("O", (), {"open": staticmethod(lambda req, timeout=None: Truncated("application/json", b""))})()
+        try:
+            with self.assertRaises(learn.LearnHttpError) as cm:
+                learn._http_get_learn(learn.search_url("foo"))
+        finally:
+            learn._OPENER = orig
+        self.assertIsNone(cm.exception.status)
+        self.assertIn("IncompleteRead", str(cm.exception))
 
 
 class Units(unittest.TestCase):
@@ -815,7 +1043,7 @@ class ReviewRegressions(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def shard(self, obj):
-        obj = {"learnMcp": "notUsed", **obj}
+        obj = {"learnMcp": "notUsed", "learnIncomplete": False, **obj}
         (self.tmp / ".work" / "batch-01.json").write_text(json.dumps(obj), encoding="utf-8")
         return shards.check_batch(self.tmp, self.st, self.b, self.meta, {})
 
@@ -823,8 +1051,8 @@ class ReviewRegressions(unittest.TestCase):
         ids = ["a", "b", "c", "d"]
         base = {"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids, "failedNoticeIds": [],
                 "notices": [self.n(i) for i in ids]}
-        for bad in (None, "", "yes", "Available"):
-            ok, fail, _, _ = self.shard(dict(base, learnMcp=bad))
+        for bad in (None, "", "yes", "Available", "fallbackGet"):  # workers never GET Learn themselves
+            ok, fail, _, _, _ = self.shard(dict(base, learnMcp=bad))
             self.assertEqual(ok, {})
             self.assertTrue(all("learnMcp" in v for v in fail.values()))
         learned = self.n("a")
@@ -832,33 +1060,106 @@ class ReviewRegressions(unittest.TestCase):
                                                   {"titleJa": "l", "url": "https://learn.microsoft.com/azure/bar", "source": "LearnSearch"}]
         learned["events"][0]["remediationStatus"] = "supplementedByLearn"
         notices = [learned] + [self.n(i) for i in ids[1:]]
-        ok, fail, warn, learn = self.shard(dict(base, notices=notices, learnMcp="notUsed"))
+        ok, fail, warn, learn, _ = self.shard(dict(base, notices=notices, learnMcp="notUsed"))
         self.assertFalse(fail)
         e = ok["a"]["events"][0]
         self.assertEqual([l["source"] for l in e["referenceLinks"]], ["Description"])
         self.assertEqual((e["remediationStatus"], e["remediationJa"], learn), ("notFound", [], "notUsed"))
         self.assertEqual(len(warn), 2)
-        ok, _, warn, learn = self.shard(dict(base, notices=notices, learnMcp="available"))
+        ok, _, warn, learn, _ = self.shard(dict(base, notices=notices, learnMcp="available"))
         e = ok["a"]["events"][0]
         self.assertEqual((len(e["referenceLinks"]), e["remediationStatus"], learn), (2, "supplementedByLearn", "available"))
         self.assertFalse(warn)
+        ok, _, warn, learn, _ = self.shard(dict(base, notices=notices, learnMcp="unavailable"))
+        e = ok["a"]["events"][0]
+        self.assertEqual(([l["source"] for l in e["referenceLinks"]], e["remediationStatus"], learn),
+                         (["Description"], "notFound", "unavailable"))
+        self.assertEqual(len(warn), 2)
+
+    def test_learn_incomplete_flag(self):
+        ids = ["a", "b", "c", "d"]
+        base = {"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids, "failedNoticeIds": [],
+                "notices": [self.n(i) for i in ids]}
+        cases = [("available", True, True, 0), ("available", "true", True, 0), ("available", False, False, 0),
+                 ("available", None, True, 1), ("available", "yes", True, 1),
+                 ("unavailable", False, True, 0),
+                 ("notUsed", False, False, 0), ("notUsed", True, False, 1)]
+        for learn_v, flag, want, nwarn in cases:
+            ok, fail, warn, learn, inc = self.shard(dict(base, learnMcp=learn_v, learnIncomplete=flag))
+            self.assertFalse(fail, (learn_v, flag))
+            self.assertEqual((learn, inc, len(warn)), (learn_v, want, nwarn), (learn_v, flag))
+        (self.tmp / ".work" / "batch-01.json").write_text(json.dumps(dict(base, learnMcp="available")), encoding="utf-8")
+        *_, inc = shards.check_batch(self.tmp, self.st, self.b, self.meta, {})
+        self.assertTrue(inc)  # missing on a Learn MCP batch: conservatively partial
+
+    def test_learn_search_links_must_point_to_learn(self):
+        ids = ["a", "b", "c", "d"]
+        a = self.n("a")
+        a["events"][0]["referenceLinks"] = [
+            {"titleJa": "ok", "url": "https://learn.microsoft.com/azure/bar", "source": "LearnSearch"},
+            {"titleJa": "other", "url": "https://azure.microsoft.com/updates/x", "source": "LearnSearch"},
+            {"titleJa": "desc", "url": "https://azure.microsoft.com/updates/y", "source": "Description"}]
+        base = {"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids, "failedNoticeIds": [],
+                "notices": [a] + [self.n(i) for i in ids[1:]]}
+        ok, fail, _, _, _ = self.shard(dict(base, learnMcp="available"))
+        self.assertFalse(fail)
+        self.assertEqual([l["url"] for l in ok["a"]["events"][0]["referenceLinks"]],
+                         ["https://learn.microsoft.com/azure/bar", "https://azure.microsoft.com/updates/y"])
+
+    def test_learn_requests_are_settled(self):
+        ids = ["a", "b", "c", "d"]
+        req = {"query": "Azure Foo v1 retirement", "keyTerms": ["Foo"]}
+        linked, bare, bad = self.n("a"), self.n("b"), self.n("c")
+        linked["events"][0]["learnRequest"] = dict(req)  # already has a link -> dropped
+        bare["events"][0]["referenceLinks"] = []
+        bare["events"][0]["learnRequest"] = dict(req)  # kept
+        bad["events"][0]["referenceLinks"] = []
+        bad["events"][0]["learnRequest"] = {"query": "", "keyTerms": []}  # invalid -> dropped
+        base = {"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids, "failedNoticeIds": [],
+                "notices": [linked, bare, bad, self.n("d")]}
+        ok, fail, warn, _, inc = self.shard(dict(base, learnMcp="available", learnIncomplete=False))
+        self.assertFalse(fail)
+        self.assertEqual([ok[i]["events"][0]["learnRequest"] for i in ("a", "b", "c")], [None, req, None])
+        self.assertTrue(inc)  # a remaining request means that event was not served by Learn MCP
+        self.assertEqual(len(warn), 3)
+        ok, _, _, _, inc = self.shard(dict(base, learnMcp="notUsed", learnIncomplete=False))
+        self.assertTrue(all(r["events"][0]["learnRequest"] is None for r in ok.values()))
+        self.assertFalse(inc)
+
+    def test_learn_search_pick_is_deterministic(self):
+        res = [{"title": "Foo v1 retirement", "url": "https://learn.microsoft.com/a"},
+               {"title": "Foo v1 retirement", "url": "https://learn.microsoft.com/a"},
+               {"title": "Bar retirement", "url": "https://learn.microsoft.com/b"},
+               {"title": "Foo overview", "url": "https://learn.microsoft.com/c"},
+               {"title": "Foo migration", "url": "http://learn.microsoft.com/d"},
+               {"title": "Foo end of support", "url": "https://learn.microsoft.com/e"},
+               {"title": "Foo deprecation", "url": "https://learn.microsoft.com/f"}]
+        self.assertEqual([l["url"] for l in learn.pick_links(res, ["foo"])],
+                         ["https://learn.microsoft.com/a", "https://learn.microsoft.com/d"])
+
+    def test_learn_capability_aggregation(self):
+        cap = shards.learn_capability
+        self.assertEqual(cap([]), "未使用")
+        self.assertEqual(cap(["notUsed"]), "未使用")
+        self.assertEqual(cap(["notUsed", "unavailable"]), "不可")
+        self.assertEqual(cap(["available", "unavailable"]), "利用可")
 
     def n(self, i, same=None):
         return {"id": i, "fetchStatus": "ok", "fetchedVia": "MRC MCP", "titleJa": "x", "events": [ev(i, "2027-01-01", same=same)]}
 
     def test_shard_shape_never_crashes(self):
         ids = ["a", "b", "c", "d"]
-        ok, fail, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": [],
+        ok, fail, _, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": [],
                                      "failedNoticeIds": [{"id": i} for i in ids], "notices": [None]})
         self.assertEqual(ok, {})
         self.assertTrue(all(v.startswith("malformedShard") for v in fail.values()))
-        ok, fail, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids + ["a"], "returnedNoticeIds": ids,
+        ok, fail, _, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids + ["a"], "returnedNoticeIds": ids,
                                      "failedNoticeIds": [], "notices": [self.n(i) for i in ids]})
         self.assertEqual(ok, {})
         self.assertIn("duplicate", fail["a"])
         bad = self.n("a")
         bad["events"] = ["not-an-object"]
-        ok, fail, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
+        ok, fail, _, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
                                      "failedNoticeIds": [], "notices": [bad] + [self.n(i) for i in ids[1:]]})
         self.assertIn("malformedShard", fail["a"])
         self.assertEqual(sorted(ok), ["b", "c", "d"])
@@ -869,7 +1170,7 @@ class ReviewRegressions(unittest.TestCase):
                    self.n("b", {"noticeId": "a", "eventKey": "a", "evidence": ""}),           # no evidence
                    self.n("c"),
                    self.n("d", {"noticeId": "a", "eventKey": "a", "evidence": "Reminder"})]    # valid
-        ok, fail, warn, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
+        ok, fail, warn, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
                                         "failedNoticeIds": [], "notices": notices})
         self.assertFalse(fail)
         self.assertIsNone(ok["a"]["events"][0]["sameEventAs"])
@@ -937,7 +1238,7 @@ class ReviewRegressions(unittest.TestCase):
         bad["events"][0]["impactType"] = "Nope"  # a fails validation and will be retried
         notices = [bad, self.n("b", {"noticeId": "a", "eventKey": "a", "evidence": "Reminder of the retirement."}),
                    self.n("c"), self.n("d")]
-        ok, fail, warn, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
+        ok, fail, warn, _, _ = self.shard({"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids,
                                         "failedNoticeIds": [], "notices": notices})
         self.assertIn("a", fail)
         self.assertEqual(ok["b"]["events"][0]["sameEventAs"]["noticeId"], "a")

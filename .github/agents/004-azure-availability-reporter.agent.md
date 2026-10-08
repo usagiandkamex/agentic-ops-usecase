@@ -33,7 +33,7 @@ description: 'Azure で構築されたシステムの可用性・SLA 達成状�
 
 ### R1. READ 操作のみ（破壊的操作の全面禁止）
 
-- **許可**: `get` / `list` / `show` / `query`（Azure Resource Graph）等の参照系 Azure MCP ツール、読み取り専用の `az ... list|show`、`az monitor metrics list` / `az monitor activity-log list`（照会）、Web の GET（SLA / Microsoft Learn の参照）。
+- **許可**: `get` / `list` / `show` / `query`（Azure Resource Graph）等の参照系 Azure MCP ツール、読み取り専用の `az ... list|show`、`az monitor metrics list` / `az monitor activity-log list`（照会）、Web の GET（SLA の参照）。**Microsoft Learn の情報・リンクは Microsoft Learn MCP（`microsoft_docs_search` / `microsoft_docs_fetch`）で取得する**。`learn.microsoft.com` への直接 GET は、Learn MCP が使えない場合のフォールバックに限る（直接 GET を繰り返すと `Too Many Requests`（429）になるため。逐次・最小限に行い、429 は 1 回だけ待って再試行し、再度 429 なら以後の Learn GET をやめて「未確認」と記録する）。
 - **禁止（実行も自動実行もしない）**: 作成・変更・削除・デプロイ・スケール/構成変更・**再起動 / 起動 / 停止**・**アラートの生成 / 変更 / 解決**・**メトリックやヘルスチェックやスキャンのトリガー**（`create` / `update` / `delete` / `set` / `restart` / `start` / `stop` / `az vm ... assess` 等）。必要な場合でも自動実行せず、**「推奨アクション」として提示するに留め**、実行判断はユーザーに委ねる。
   - **例外**: `set` のうち、**ローカル CLI 設定のみを変える** `az config set core.login_experience_v2=off`（認証の対話停止を避ける目的）は Azure への書き込みではなく、R2 の端末用途③として許可する。
 - Reader 権限（`*/read`）を超える操作はしない。取得できない項目は「取得不可 / 確認不可」と明示する。
@@ -236,7 +236,7 @@ READ 参照で設定有無を点検し `operationsChecklist[]` に記録する�
 2. **テンプレート準拠チェック**: 出力が `report-template/*` の複製であり、**`<style>` ブロック・`<span class="crumb">`・`<footer>`・主要クラス名・各テーブルの `<thead>`（列ラベル / 列数 / 列順）・`<!-- SECTION: x -->` アンカー**を保持しているか。必須アンカー: index=`summary`/`top-incidents`、availability=`availability-method`/`availability-detail`/`sla-summary`、incidents=`incidents-list`/`alerts-list`、operations=`ops-checklist`/`nfr-mapping`。ファイル名・フォルダ名が規定どおりか。
 3. **空セクションチェック**: 0 件のセクションで `<h2>`・テーブルを削除していないか（フォールバック行 1 行）。「該当なし」と「確認不可（<capability> 未有効）」を正しく区別しているか（`capabilities` と矛盾していないか）。
 4. **サマリ整合チェック**: `summary` の総合可用性・SLA 達成 / 未達・インシデント・未解決アラート・監視カバレッジが各テーブルと整合するか。BEGIN/END 区域が対応配列の全要素を展開しているか（省略・集約行なし）。
-5. **リンク整合チェック**: SLA / Learn / 非機能要求グレードの参照 URL が実在する公式ページで、テキストと遷移先が一致するか。
+5. **リンク整合チェック**: SLA / Learn / 非機能要求グレードの参照 URL が実在する公式ページで、テキストと遷移先が一致するか。**Learn の URL は Learn MCP（`microsoft_docs_fetch`）で確認する**（直接 GET は Learn MCP が使えない場合のフォールバックのみ。R1 の 429 の扱いに従う）。
 6. **目安・目標の出所の明記**: 稼働率が「目安」であることを明記しているか。**SLA 目標がシステム側の入力値（sla-targets.csv 由来）で Azure 公表 SLA で代替していないか。目標未入力のリソースを「未入力（要指定）」とし達成判定していないか**（`slaTarget=null` なら `slaMet=null`）。
 7. **安全性チェック**: シークレット / パスワード / 接続文字列などの機微情報を含めていないか。
 8. **CSV チェック**: `availability.csv` / `incidents.csv` が UTF-8 BOM 付き（先頭 3 バイト 239,187,191）で、カンマ / 改行 / 二重引用符を含む値が RFC 4180 で引用符囲みか。

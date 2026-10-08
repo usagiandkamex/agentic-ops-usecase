@@ -16,7 +16,7 @@ agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure
 - **情報源**:
   - **列挙・件数照合**: Release Communications 公開 API `https://www.microsoft.com/releasecommunications/api/v2/azure`（Azure Updates のバックエンド。件数・フィルタ・ページングが使えるため、列挙はこちらを正とする）。
   - **本文の取得**: MRC MCP `get_azure_update_by_id`（ワーカーが使用）。**MRC MCP が使えない実行**（`init --mrc-mcp unavailable`）では、同梱ツールの `next-wave` が公開 API の `/<id>` から本文を取得・テキスト化して**ワーカーの入力ファイル**（`notices[].body`）に入れ、Web・MCP・端末を持たない**オフラインワーカー**が抽出する（ツールが抽出結果の根拠・リンクを取得済み本文と照合する）。
-  - **対応策の補完**: Microsoft Learn MCP（MRC MCP が使える実行のワーカーのみ・本文に公式リンクが無い場合だけ）。
+  - **対応策の補完**: Microsoft Learn MCP（`microsoft_docs_search` / `microsoft_docs_fetch`。MRC MCP が使える実行のワーカーのみ・本文に公式リンクが無い場合だけ）。ワーカーは `learn.microsoft.com` を GET しない。Learn MCP で補完できなかったイベントは、全バッチ完了後に同梱ツールの `learn-fallback` が Learn 検索 API を逐次・上限付きで照会してリンクだけを補完する（並列ワーカーからの同時 GET による 429 を防ぐため）。
 - **同梱ツール** [`retirement_tool.py`](../../usecases/005-azure-retirement-report/tools/retirement_tool.py)（Python 3 標準ライブラリのみ・レビュー済み）: 列挙・完全性照合・重複候補のグループ化・バッチ化・シャード検証・再委譲計画・統合・影響度判定・集計・HTML / CSV 描画・検証ゲート・`progress.md` 更新を**決定論的に**行う。使い方は [tools/README.md](../../usecases/005-azure-retirement-report/tools/README.md)。
 - **役割分担**:
   - **あなた（orchestrator）**: 収集範囲・収集能力の確認と単一承認、**同一対象（sameTarget）の判定**、ワーカーの並列起動、**総評の執筆**、report-writer への委譲、レビュー結果の記録、完了報告。決定論処理はすべて同梱ツールのサブコマンドで行う。
@@ -31,7 +31,7 @@ agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure
 | 2 | 収集能力の判別 →〈最終承認〉 | `probe` |
 | 3 | 保存先・進捗 | `init` |
 | 4 | 列挙・完全性照合・同一対象の判定・バッチ化（G1） | `enumerate` → `record-same-target` → `plan-batches` |
-| 5 | 詳細取得・要約（ワーカー並列・G2） | `next-wave` →（ワーカー起動）→ `check-shards` を繰り返す |
+| 5 | 詳細取得・要約（ワーカー並列・G2）・Learn MCP 不可分の補完 | `next-wave` →（ワーカー起動）→ `check-shards` を繰り返す →（必要時）`learn-fallback` |
 | 6 | 統合・影響度判定・集計（G3）・総評 | `merge` → `set-highlight` |
 | 7 | レポート生成・検証（G4）・独立レビュー | writer が `render`／あなたが `record-review` |
 | 8 | 完了報告 | `finalize` |
@@ -44,7 +44,7 @@ agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure
 
 ### R1. 公開情報の READ のみ（Azure へはアクセスしない）
 
-- 許可: MRC MCP の参照系ツール、同梱ツール（公開 API への HTTPS GET のみを行う。一覧・件数と、MRC MCP が使えない実行での本文）。
+- 許可: MRC MCP の参照系ツール、同梱ツール（HTTPS GET は公開 API の一覧・件数・MRC MCP が使えない実行での本文と、`learn-fallback` での Learn 検索 API の逐次照会だけ）。Microsoft Learn の情報・リンクは**ワーカーが Learn MCP で取得する**。あなたもワーカーも `learn.microsoft.com` を GET しない（並列の直接 GET は `Too Many Requests` を招く。Learn MCP で補完できなかった分は `learn-fallback` に任せる）。
 - 禁止: Azure MCP・Azure CLI・Azure Resource Graph 等による **Azure リソース・サブスクリプションへのアクセス**（照会も含めて行わない）、外部への POST / 書き込み、MCP の書き込み系ツール。
 - 認証・サブスクリプション指定・`az login` は不要（求めない）。
 
@@ -68,7 +68,7 @@ agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure
 ### R5. 親ターンの継続（early return 禁止）
 
 - サブエージェントの返却は**親ターンの完了ではなく中間結果**。返却メッセージを最終回答として終了しない。
-- ワーカー wave の返却後は同じ親ターン内で `check-shards` → `next-wave` → … → `merge` → writer 委譲 → `record-review` → `finalize` → 完了報告まで続ける。「次に〜します」と予定だけを述べてターンを終えない。
+- ワーカー wave の返却後は同じ親ターン内で `check-shards` → `next-wave` → … →（必要時）`learn-fallback` → `merge` → writer 委譲 → `record-review` → `finalize` → 完了報告まで続ける。「次に〜します」と予定だけを述べてターンを終えない。
 - 停止してよいのはハードブロッカー（公開 API に接続できない・ツールが同じエラーを 2 回続けて返す等）だけ。その場合も `status` の出力を利用者に示し、**再開方法**（下記「中断からの再開」）を伝える。
 
 ---
@@ -105,7 +105,7 @@ agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure
 次の内容で Azure リタイア情報レポートを作成します:
 - 収集範囲: <scope.label>（基準日 <asOfDate> JST）
 - 情報源: MRC MCP=<可否> / 公開 API=<可否>（Retirements 全 <retirementsTotal> 件のうち、範囲の候補 約 <inScopeCount> 件の本文を取得・要約）
-- 対応策の補完: Microsoft Learn MCP（ワーカー実行時に判定）
+- 対応策の補完: Microsoft Learn MCP（ワーカー実行時に判定。使えなかった分はツールが Learn 検索 API を逐次照会してリンクのみ補完）
 - Azure リソース・サブスクリプションへはアクセスしません（公開情報のみ）
 1. この内容で実行する
 2. 収集範囲を選び直す
@@ -131,7 +131,8 @@ agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure
    - MRC MCP が `不可` の実行では、各投稿の本文を公開 API から取得・テキスト化して入力ファイルの `notices[].body` に入れる（取得できなかった投稿は `body.fetchError` 付きで渡し、ワーカーが失敗として返す＝通常の再委譲の対象）。公開 API 自体に接続できない場合は終了コード `3` で終わり、状態は変わらない（試行回数も消費しない）。ネットワークを確認して `next-wave` を再実行する。
 2. `dispatch[]` の各要素について、**`dispatch[].workerAgent` に書かれたエージェント**（MRC MCP が `利用可` なら `azure-retirement-summarizer`、`不可` ならネットワークを持たない `azure-retirement-summarizer-offline`）を **同じ tool-call batch で並列に起動**する（呼び出し構文を自作せず、VS Code の agent tool の並列 subagent 実行を使う。別のエージェントに差し替えない）。プロンプトは `dispatch[].workerPrompt` をそのまま使う（入力ファイルとシャードの絶対パスを含む）。
 3. 全ワーカーの返却を待ち、`<TOOL> check-shards --run <run>` を実行する。ツールが各シャードを厳格に検証・正規化し（許可外リンクの除去・メールアドレス / SafeLinks の伏字化・`sameEventAs` の参照先確認を含む）、失敗した投稿**だけ**を再委譲バッチ（`B<NN>-r<n>`・投稿ごとに最大 3 回）として計画する。3 回失敗した投稿は取得失敗として記録され、処理は続行する。
-4. 出力の `next` が `next-wave` なら 1 に戻る。`G2` が返れば手順 6 へ。
+4. 出力の `next` が `next-wave` なら 1 に戻る。`G2` が返り `next` が `merge` なら手順 6 へ。
+5. `G2` が返り `next` が `learn-fallback` なら、`<TOOL> learn-fallback --run <run>` を **1 回だけ**実行してから手順 6 へ。Learn MCP で補完できなかったイベント（ワーカーが `learnRequest` を書いたもの）について、**ツールが Learn 検索 API を 1 件ずつ・間隔を空けて**照会し（同じ検索語は 1 回だけ・1 回の実行で最大 30 検索・429 は `Retry-After` に従って最大 2 回再試行・それでも 429 やネットワークエラーなら残りを中止）、該当ページのリンクだけを追加する。中止・上限超過の依頼が残っても `merge` に進んでよい（`collectionPlan` に記録される）。あなたやワーカーが Learn を GET して代替しない。
 
 ### 手順 6. 統合・影響度判定・集計（G3）と総評
 
