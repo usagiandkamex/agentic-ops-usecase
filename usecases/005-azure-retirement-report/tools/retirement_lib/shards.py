@@ -87,16 +87,17 @@ def enforce_body_provenance(rec: dict, body: dict, warnings: list[str]) -> None:
         rd = e["retireDate"]
         if rd["precision"] != "unknown" and rd["source"] == "description" and not _in_body(rd["evidence"], body_norm):
             warnings.append(f"{k}: retireDate の根拠が取得済み本文に見つからないため unknown にした")
-            e["retireDate"] = {"precision": "unknown", "start": None, "end": None, "source": "none", "evidence": rd["evidence"]}
+            e["retireDate"] = {"precision": "unknown", "start": None, "end": None, "source": "none", "evidence": ""}
         elif rd["precision"] != "unknown" and rd["source"] == "availability" and (
                 rd["precision"] != "month" or not avail_month or rd["start"][:7] != avail_month):
             # An availability-sourced date is the month of the tool-fetched availabilities, never anything else.
             warnings.append(f"{k}: retireDate（source=availability）が取得済みの availabilities の月と一致しないため unknown にした")
-            e["retireDate"] = {"precision": "unknown", "start": None, "end": None, "source": "none", "evidence": rd["evidence"]}
+            e["retireDate"] = {"precision": "unknown", "start": None, "end": None, "source": "none", "evidence": ""}
         for f in FLAG_NAMES:
             if e["flags"][f] != "unknown" and not _in_body(e["flagEvidence"][f], body_norm):
                 warnings.append(f"{k}: flags.{f} の根拠が取得済み本文に見つからないため unknown にした")
                 e["flags"][f] = "unknown"
+                e["flagEvidence"][f] = ""
         s = e["sameEventAs"]
         if s and not _in_body(s["evidence"], body_norm):
             warnings.append(f"{k}: sameEventAs の根拠が取得済み本文に見つからないため統合候補から外した")
