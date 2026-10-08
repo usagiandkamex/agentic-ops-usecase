@@ -7,6 +7,7 @@ Only links are added (source=LearnSearch); remediation steps are never derived f
 """
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import time
@@ -78,7 +79,7 @@ def _http_get_learn(url: str) -> Any:
             data = r.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as e:
         raise LearnHttpError(e.code, e.headers.get("Retry-After") if e.headers else None, f"HTTP {e.code}")
-    except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ConnectionError) as e:
         raise LearnHttpError(None, None, f"{type(e).__name__}: {str(e)[:120]}")
     if len(data) > MAX_RESPONSE_BYTES:
         raise LearnHttpError(None, None, "response too large")

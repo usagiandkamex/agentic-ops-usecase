@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import http.client
 import io
 import json
 import os
@@ -932,6 +933,21 @@ class ApiResponses(unittest.TestCase):
         for resp in (self._Resp("text/html", b"<html>"), self._Resp("application/json", b"\xff\xfe\x00bad"),
                      self._Resp("application/json", b"{not json"), self._Resp("application/json", b"{}", status=203)):
             self.assertEqual(self._with(resp).code, 3)
+
+    def test_learn_truncated_body_is_learn_http_error(self):
+        class Truncated(self._Resp):
+            def read(self, n=-1):
+                raise http.client.IncompleteRead(b"{", 10)
+
+        orig = learn._OPENER
+        learn._OPENER = type("O", (), {"open": staticmethod(lambda req, timeout=None: Truncated("application/json", b""))})()
+        try:
+            with self.assertRaises(learn.LearnHttpError) as cm:
+                learn._http_get_learn(learn.search_url("foo"))
+        finally:
+            learn._OPENER = orig
+        self.assertIsNone(cm.exception.status)
+        self.assertIn("IncompleteRead", str(cm.exception))
 
 
 class Units(unittest.TestCase):
