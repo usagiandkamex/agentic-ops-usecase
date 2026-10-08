@@ -12,6 +12,7 @@ from .common import (MAX_ATTEMPTS, MAX_BATCH, RunLock, ToolError, clean_list, cl
                      month_bounds, normalize_link, parse_date, read_json, require_phase, save_state, write_json,
                      write_text)
 from .api import availability_month
+from .learn import LEARN_CAPABILITY_FALLBACK, LEARN_HOST, collect_requests  # noqa: F401 (re-exported for callers)
 from .plan import _new_batch, _recency, load_accepted, load_candidates
 
 PRECISIONS = {"day", "month", "unknown"}
@@ -20,13 +21,11 @@ IMPACT_TYPES = {"ServiceRetirement", "SkuRetirement", "VersionRetirement", "Feat
 CLASS_STATUSES = {"confirmed", "ambiguous", "insufficientEvidence"}
 REMEDIATION_STATUSES = {"explicit", "supplementedByLearn", "notFound"}
 FLAG_NAMES = ("workloadStop", "dataLossRisk", "autoMigration")
-LEARN_VALUES = {"available", "fallbackGet", "unavailable", "notUsed"}
-# Manifest values whose Learn-derived links are kept (Learn MCP, or direct GET only when MCP is unavailable).
-LEARN_KEEP = {"available", "fallbackGet"}
-# Values meaning some events needing a Learn supplement could not get a full one (GET fallback is capped / links only).
-LEARN_PARTIAL = {"fallbackGet", "unavailable"}
-LEARN_CAPABILITY_FALLBACK = "不可（直接取得で補完）"
-LEARN_HOST = "learn.microsoft.com"
+LEARN_VALUES = {"available", "unavailable", "notUsed"}
+# Workers never GET Microsoft Learn: Learn-derived links / remediation are kept only from Learn MCP.
+LEARN_KEEP = {"available"}
+# Values meaning some events needing a Learn supplement were not served by Learn MCP.
+LEARN_PARTIAL = {"unavailable"}
 FETCHED_VIA = ("MRC MCP", "ReleaseCommunicationsApi")
 
 
@@ -71,31 +70,55 @@ def _prefetched_bodies(run: Path, b: dict) -> dict:
 
 
 def learn_capability(learns: list[str]) -> str:
-    """Run-level Learn capability from the accepted batches' manifest values (MCP use takes precedence)."""
+    """Run-level Learn capability from the accepted batches' manifest values (MCP use takes precedence).
+
+    `learn-fallback` later upgrades "不可" to LEARN_CAPABILITY_FALLBACK when the tool's own search got responses.
+    """
     if "available" in learns:
         return "利用可"
-    if "fallbackGet" in learns:
-        return LEARN_CAPABILITY_FALLBACK
     return "不可" if "unavailable" in learns else "未使用"
 
 
-def _drop_learn_remediation(rec: dict, learn: str, warnings: list[str]) -> None:
-    """Learn-derived remediation steps need a Learn page read through Learn MCP (the GET fallback only adds links)."""
-    for e in rec["events"]:
-        if e["remediationStatus"] == "supplementedByLearn":
-            warnings.append(f"{e['eventKey']}: learnMcp={learn} のため remediationStatus を notFound にした")
-            e["remediationStatus"], e["remediationJa"] = "notFound", []
-
-
 def _drop_learn_outputs(rec: dict, learn: str, warnings: list[str]) -> None:
-    """A shard that did not use Learn (MCP or the GET fallback) must not carry Learn-derived links or remediation."""
+    """A shard that did not use Learn MCP must not carry Learn-derived links or remediation."""
     for e in rec["events"]:
         k = e["eventKey"]
         kept = [l for l in e["referenceLinks"] if l["source"] != "LearnSearch"]
         if len(kept) != len(e["referenceLinks"]):
             warnings.append(f"{k}: learnMcp={learn} のため Learn 補完のリンクを除外した")
             e["referenceLinks"] = kept
-    _drop_learn_remediation(rec, learn, warnings)
+        if e["remediationStatus"] == "supplementedByLearn":
+            warnings.append(f"{k}: learnMcp={learn} のため remediationStatus を notFound にした")
+            e["remediationStatus"], e["remediationJa"] = "notFound", []
+
+
+def _learn_request(v: Any, key: str, warnings: list[str]) -> dict | None:
+    if v is None:
+        return None
+    req = {"query": clean_text(v.get("query"), 200), "keyTerms": clean_list(v.get("keyTerms"), 60, 3)} if isinstance(v, dict) else {}
+    if not req.get("query") or not req.get("keyTerms"):
+        warnings.append(f"{key}: learnRequest の query / keyTerms が不正のため除外した")
+        return None
+    return req
+
+
+def _settle_learn_requests(rec: dict, learn: str, api_mode: bool, warnings: list[str]) -> int:
+    """Keep a Learn search request only for an event that still has no link at all; returns how many remain."""
+    kept = 0
+    for e in rec["events"]:
+        if not e["learnRequest"]:
+            continue
+        why = None
+        if api_mode or learn == "notUsed":
+            why = f"learnMcp={'notUsed' if api_mode else learn} では使えない"
+        elif e["referenceLinks"]:
+            why = "既にリンクがある"
+        if why:
+            warnings.append(f"{e['eventKey']}: learnRequest は{why}ため除外した")
+            e["learnRequest"] = None
+        else:
+            kept += 1
+    return kept
 
 
 def enforce_body_provenance(rec: dict, body: dict, warnings: list[str]) -> None:
@@ -207,7 +230,7 @@ def _links(v: Any) -> list[dict]:
             continue
         source = l.get("source") if l.get("source") in ("Description", "LearnSearch") else "Description"
         if source == "LearnSearch" and urllib.parse.urlsplit(url).hostname != LEARN_HOST:
-            # A Learn supplement must point to Microsoft Learn itself, whichever way it was found (MCP or GET fallback).
+            # A Learn supplement link must point to Microsoft Learn itself.
             continue
         seen.add(url)
         out.append({"titleJa": clean_text(l.get("titleJa"), 200) or url, "url": url, "source": source,
@@ -266,6 +289,7 @@ def validate_event(e: Any, key: str, warnings: list[str]) -> dict:
         "migrationTarget": clean_text(e.get("migrationTarget"), 200),
         "referenceLinks": _links(e.get("referenceLinks")),
         "sameEventAs": same,
+        "learnRequest": _learn_request(e.get("learnRequest"), key, warnings),
     }
 
 
@@ -303,10 +327,10 @@ def validate_notice(n: Any, meta: dict, allowed: list[str], warnings: list[str],
 
 
 def _learn_incomplete(sh: dict, learn: str, api_mode: bool, warnings: list[str]) -> bool:
-    """Whether some event that needed a Learn supplement was not served by Learn MCP (GET fallback or nothing).
+    """Whether some event that needed a Learn supplement was not served by Learn MCP (left as a learnRequest or unserved).
 
     learnMcp is one value per batch (MCP use takes precedence), so a batch that used Learn MCP for one event and
-    fell back for another reports "available"; the manifest flag learnIncomplete carries that mix.
+    could not for another reports "available"; the manifest flag learnIncomplete carries that mix.
     """
     if api_mode or learn == "notUsed":
         # Offline workers never supplement; "notUsed" means no event needed a supplement.
@@ -385,7 +409,7 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict
         learn = sh.get("learnMcp")
         if learn not in LEARN_VALUES:
             # Required manifest field: it decides the run's Learn provenance, so a missing / invalid value is malformed.
-            raise ShardError('learnMcp must be "available", "fallbackGet", "unavailable" or "notUsed"')
+            raise ShardError('learnMcp must be "available", "unavailable" or "notUsed"')
         if api_mode and learn != "notUsed":
             # The offline worker profile has no network (no Learn MCP, no GET); any other claim is not trusted.
             warnings.append(f"learnMcp={learn} は MRC MCP 不可の実行（オフラインワーカー）では使えないため notUsed とした")
@@ -395,6 +419,7 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict
         return {}, {i: f"malformedShard: {str(ex)[:120]}" for i in assigned}, warnings, None, None
     ok: dict = {}
     failures: dict = {}
+    pending_requests = 0
     for f in fail:
         failures[f["id"]] = "fetchFailed: " + clean_text(f.get("reason"), 100)
     for n in notices:
@@ -409,8 +434,7 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict
                 enforce_body_provenance(rec, bodies.get(nid, {}), warnings)
             elif learn not in LEARN_KEEP:
                 _drop_learn_outputs(rec, learn, warnings)
-            elif learn == "fallbackGet":
-                _drop_learn_remediation(rec, learn, warnings)
+            pending_requests += _settle_learn_requests(rec, learn, api_mode, warnings)
             rec["batchId"] = b["batchId"]
             ok[nid] = rec
         except ShardError as ex:
@@ -439,6 +463,10 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict
             if why:
                 warnings.append(f"{e['eventKey']}: sameEventAs の{why}ため統合候補から外した")
                 e["sameEventAs"] = None
+    if pending_requests and learn == "available" and not incomplete:
+        # A Learn search request means that event was not served by Learn MCP.
+        warnings.append("learnRequest があるため learnIncomplete を true とした")
+        incomplete = True
     return ok, failures, warnings, learn, incomplete
 
 
@@ -527,15 +555,23 @@ def cmd_check_shards(args: Any, run: Path) -> dict:
             eff_batches = [b for b in st["batches"] if b["batchId"] in effective and b["learnMcp"]]
             learns = [b["learnMcp"] for b in eff_batches]
             st["capabilities"]["learnMcp"] = learn_capability(learns)
-            # A batch can mix Learn MCP and the GET fallback while reporting "available"; its flag is OR-ed in.
+            # A batch can mix Learn MCP success and failure while reporting "available"; its flag is OR-ed in.
             st["learnSupplementIncomplete"] = any(x in LEARN_PARTIAL for x in learns) or any(
                 b.get("learnIncomplete") for b in eff_batches)
             st["gates"]["G2"] = {"status": "pass" if g2 else "fail", "returned": len(okc), "failed": ex}
+            items = collect_requests(accepted, okc) if g2 else []
+            st["learnFallback"] = {"status": "pending" if items else "notNeeded", "items": items}
             if g2:
                 st["phase"] = "collected"
-                log(st, "check-shards", f"G2 合格: 返却 {len(okc)} 件・取得失敗（再試行上限）{len(ex)} 件")
+                log(st, "check-shards", f"G2 合格: 返却 {len(okc)} 件・取得失敗（再試行上限）{len(ex)} 件"
+                    + (f"・Learn 検索の依頼 {len(items)} 件" if items else ""))
             result["G2"] = st["gates"]["G2"]
-            result["next"] = f"merge --run {st['runId']}"
+            if items:
+                result["learnRequests"] = len(items)
+                result["next"] = (f"learn-fallback --run {st['runId']}（Learn MCP で補完できなかった {len(items)} 件を、"
+                                  "ツールが Learn 検索 API で 1 件ずつ補完する）")
+            else:
+                result["next"] = f"merge --run {st['runId']}"
         else:
             result["next"] = f"next-wave --run {st['runId']}"
         save_state(run, st)

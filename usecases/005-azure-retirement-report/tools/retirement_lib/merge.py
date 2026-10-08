@@ -8,6 +8,7 @@ from typing import Any
 from .common import (HIGHLIGHT_INPUT, PLACEHOLDER_RE, REPO_REL_REPORTS, TOOL_VERSION, RunLock, ToolError, clean_text,
                      id_key, jst_stamp, load_state, log, ordinal_ignore_case_key, read_json, read_text_input,
                      require_phase, save_state, sensitive_kinds, url_violation, walk_strings, write_json, write_text)
+from .learn import LEARN_CAPABILITY_FALLBACK
 from .plan import _UF, _recency, load_accepted, load_candidates
 
 MATRIX = {3: {3: "High", 2: "High", 1: "Medium"}, 2: {3: "High", 2: "Medium", 1: "Low"}, 1: {3: "Medium", 2: "Low", 1: "Low"}}
@@ -25,7 +26,7 @@ IMPACT_RULE = {
 SOURCES = {
     "primary": "Microsoft Release Communications MCP (get_recent_azure_updates / get_azure_update_by_id)",
     "fallback": "Release Communications 公開 API https://www.microsoft.com/releasecommunications/api/v2/azure（Azure Updates https://azure.microsoft.com/ja-jp/updates/ と同一データ源）",
-    "remediationSupplement": "Microsoft Learn MCP（本文に公式リンクが無い場合のみ。Learn MCP が使えない場合だけ learn.microsoft.com の検索 API への直接 GET で補完）",
+    "remediationSupplement": "Microsoft Learn MCP（本文に公式リンクが無い場合のみ。Learn MCP が使えなかったイベントだけ、同梱ツールの learn-fallback が Learn 検索 API を逐次・上限付きで照会してリンクを補完）",
 }
 UNDATED = "日付不明"
 
@@ -134,6 +135,23 @@ def _detail_query(st: dict) -> str:
     return "get_azure_update_by_id（ワーカー並列）"
 
 
+LEARN_QUERY = "microsoft_docs_search（本文に公式リンクが無い event のみ）／Learn MCP 不可の event は learn-fallback（Learn 検索 API・逐次）"
+
+
+def _learn_note(st: dict, learn: str, incomplete: bool) -> str:
+    note = f"learnMcp={learn}"
+    if incomplete:
+        note += "／一部の補完は Learn MCP によらない（ツールの逐次検索でリンクのみ補完、または補完不可）"
+    lf = st.get("learnFallback") or {}
+    items = lf.get("items") or []
+    if items:
+        n = {s: sum(1 for x in items if x["status"] == s) for s in ("linked", "noMatch", "stopped", "capped")}
+        note += f"／learn-fallback: 依頼 {len(items)} 件・リンク追加 {n['linked']} 件・該当なし {n['noMatch']} 件"
+        if n["stopped"] or n["capped"]:
+            note += f"・未照会 {n['stopped'] + n['capped']} 件（{lf.get('stoppedReason') or '上限'}）"
+    return note
+
+
 def _collection_plan(st: dict, final: dict | None = None) -> list[dict]:
     e = st["enumeration"]
     en = e["enumeration"]
@@ -144,20 +162,20 @@ def _collection_plan(st: dict, final: dict | None = None) -> list[dict]:
                   f"consistent={'true' if en['consistent'] else 'false'}／screenStatus={e['prefilter']['screenStatus']}")]
     if final is None:
         plan += [_plan("Detail:fetchAndExtract", "常時", 5, detail),
-                 _plan("Remediation:learnSupplement", "learnMcp=利用可", 5, "microsoft_docs_search（本文に公式リンクが無い event のみ）"),
+                 _plan("Remediation:learnSupplement", "learnMcp=利用可", 5, LEARN_QUERY),
                  _plan("Normalize:eventsAndDedup", "常時", 6, "shard 統合・sameEventAs 統合・範囲の最終判定"),
                  _plan("Score:impactAndSummary", "常時", 6, "impactRule の決定論適用・summary/byCategory/byQuarter 集計")]
         return plan
     failed = final["failed"]
     learn = st["capabilities"]["learnMcp"]
-    # Some accepted batch did not serve every needed Learn supplement through Learn MCP (GET fallback or none).
+    # Some accepted batch did not serve every needed Learn supplement through Learn MCP.
     incomplete = bool(st.get("learnSupplementIncomplete"))
     plan += [
         _plan("Detail:fetchAndExtract", "常時", 5, detail, "downgraded" if failed else "done",
               cand, final["returned"], ("取得失敗: " + ", ".join(failed)) if failed else ""),
-        _plan("Remediation:learnSupplement", "learnMcp=利用可", 5, "microsoft_docs_search（本文に公式リンクが無い event のみ）",
-              "downgraded" if learn == "不可" or incomplete else "done", None, final["learnLinks"],
-              f"learnMcp={learn}" + ("／一部の補完は Learn MCP によらない（上限付きの直接取得で補完、または補完不可）" if incomplete else "")),
+        _plan("Remediation:learnSupplement", "learnMcp=利用可", 5, LEARN_QUERY,
+              "downgraded" if learn in ("不可", LEARN_CAPABILITY_FALLBACK) or incomplete else "done", None, final["learnLinks"],
+              _learn_note(st, learn, incomplete)),
         _plan("Normalize:eventsAndDedup", "常時", 6, "shard 統合・sameEventAs 統合・範囲の最終判定", "done",
               None, final["eventCount"], f"統合 {final['merged']} 件・範囲外 {final['outOfScope']} 件"),
         _plan("Score:impactAndSummary", "常時", 6, "impactRule の決定論適用・summary/byCategory/byQuarter 集計", "done",
@@ -416,6 +434,9 @@ def cmd_merge(args: Any, run: Path) -> dict:
     with RunLock(run):
         st = load_state(run)
         require_phase(st, ("collected", "merged", "highlighted", "rendered"), "merge")
+        if (st.get("learnFallback") or {}).get("status") == "pending":
+            raise ToolError("Learn 検索の依頼が未処理のため merge できない", code=2,
+                            next=f"learn-fallback --run {st['runId']} を先に実行する")
         cands = load_candidates(run, st)
         f = build_findings(st, cands, load_accepted(run))
         fails = verify_findings(f)

@@ -12,7 +12,7 @@ agent: 'azure-retirement-analyst'
 
 - **列挙・件数照合**: [Azure の更新情報](https://azure.microsoft.com/ja-jp/updates/) と同一データ源の公開 API（同梱ツールが HTTPS GET で取得）。
 - **本文の取得**: Microsoft Release Communications（MRC）MCP の `get_azure_update_by_id`（不可なら公開 API）。
-- **対応策の補完**: 本文に公式リンクが無い場合のみ Microsoft Learn MCP（`learn.microsoft.com` への直接 GET は Learn MCP が使えない場合のフォールバックのみ）。
+- **対応策の補完**: 本文に公式リンクが無い場合のみ Microsoft Learn MCP（エージェントは `learn.microsoft.com` を GET しない。Learn MCP で補完できなかった分は同梱ツールの `learn-fallback` が逐次検索してリンクのみ補完）。
 - 収集範囲は実行時に選択する（既定: **今後予定のすべて＋直近 3 か月にリタイア済み**／今後のみ／今後 12 か月／全件／カスタム）。
 
 ## 出力

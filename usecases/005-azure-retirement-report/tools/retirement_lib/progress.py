@@ -10,7 +10,7 @@ STEPS = [
     ("initialized", "手順1 収集範囲の確認・同意 ／ 手順2 収集能力の判別〈最終承認〉／ 手順3 保存先・進捗（init）"),
     ("enumerated", "手順4 列挙・完全性照合・本文の年による候補補完（enumerate）"),
     ("planned", "手順4 同一対象の判定（record-same-target）・重複候補グループ・バッチ化・findings.json 骨組み（plan-batches・G1）"),
-    ("collected", "手順5 詳細取得・要約（next-wave → ワーカー並列 → check-shards・G2）"),
+    ("collected", "手順5 詳細取得・要約（next-wave → ワーカー並列 → check-shards・G2 → 必要時 learn-fallback）"),
     ("merged", "手順6 統合・影響度判定・集計（merge・G3）"),
     ("highlighted", "手順6 総評の記録（set-highlight）"),
     ("rendered", "手順7 レポート生成・検証（render・G4）"),
@@ -34,6 +34,8 @@ def next_action(st: dict) -> str:
             return f"起動済みワーカー（{ids}）の返却を待って check-shards --run {run}（中断後の再開でシャードが無い場合も check-shards が再委譲を計画する）"
         return f"next-wave --run {run}"
     if p == "collected":
+        if (st.get("learnFallback") or {}).get("status") == "pending":
+            return f"learn-fallback --run {run}（Learn MCP で補完できなかった event をツールが逐次検索）→ merge --run {run}"
         return f"merge --run {run}"
     if p == "merged":
         return f"総評を編集ツールで .work/highlight.txt に書いて set-highlight --run {run}"

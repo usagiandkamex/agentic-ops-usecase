@@ -23,6 +23,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 | 4 | `plan-batches --run <run>` | 重複候補グループ・バッチ化・`findings.json` 骨組み（G1） |
 | 5 | `next-wave --run <run> [--max 6]` | 次に起動するバッチの入力ファイルを作り `dispatch[]` を返す（MRC MCP が `不可` の実行では、各投稿の本文を公開 API から取得して入力ファイルに入れる） |
 | 5 | `check-shards --run <run>` | シャードの厳格検証・正規化・再委譲バッチの計画（全バッチ完了で G2） |
+| 5 | `learn-fallback --run <run>` | G2 後、Learn MCP で補完できなかったイベントの検索依頼を Learn 検索 API で逐次照会してリンクを追加（依頼がある場合だけ。`next` で案内される） |
 | 6 | `merge --run <run>` | 統合・範囲の最終判定・影響度・集計を `findings.json` に書く（G3） |
 | 6 | `set-highlight --run <run>` | 編集ツールで書いた `<run>/.work/highlight.txt` の総評を記録（G3 を再実行。記録後にファイルを削除） |
 | 7 | `render --run <run>` | `index.html` / `retirements.csv` を生成し検証ゲート 1〜8 を実行（G4） |
@@ -33,7 +34,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 
 - `<type>` = `default` / `futureOnly` / `next12Months` / `all` / `custom`。`--run` は `reports/` 直下のフォルダ名（またはそのパス）。
 - 総評・レビュー要約のような**自由記述はコマンドラインに渡さない**（レポート由来の文字列が端末のシェル解析を経ると、引用符やコマンド置換で同梱ツール以外のコマンドが実行され得るため）。オーケストレーターが編集ツールで上記の固定ファイル（UTF-8・16 KB 以下・リンク不可）に書き、サブコマンドがそれを読む。
-- 終了コード: `0` 成功 / `1` ゲート不合格 / `2` 使い方・状態のエラー（`error` と `next` を読む）/ `3` ネットワーク・公開 API のエラー（接続失敗のほか、HTTP 200 以外・JSON 以外・サイズ超過・解析できない応答を含む）。
+- 終了コード: `0` 成功 / `1` ゲート不合格 / `2` 使い方・状態のエラー（`error` と `next` を読む）/ `3` ネットワーク・公開 API のエラー（接続失敗のほか、HTTP 200 以外・JSON 以外・サイズ超過・解析できない応答を含む）。`learn-fallback` は Learn の 429・接続エラーで終了コード `3` にせず、残りの依頼を中止して `0` で終わる（レポートは続行できる）。
 
 ## 状態と再開
 
@@ -92,9 +93,22 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 - マニフェスト（`expectedNoticeIds` = 割当、`returnedNoticeIds ∪ failedNoticeIds` = 割当・重複なし、`notices[].id` = 返却）が崩れたシャードは、割当の全投稿を失敗にする。投稿ごとの列挙値の誤り・必須キーの欠落はその投稿だけ失敗にする。
 - 無害な正規化: 月精度の `start` / `end` を月初・月末に、日精度の `end` を `start` に揃える、真偽値を `"true"` / `"false"` 文字列に、対応策が空なら `notFound` に、根拠（`flagEvidence`）が空の `"true"` / `"false"` フラグは `"unknown"` に、出典（`source` が `description` / `availability`）または根拠（`evidence`）が無い既知のリタイア日は `precision="unknown"` に（いずれも警告を記録）。
 - サニタイズ: 制御文字の除去・長さ上限、メールアドレス / SafeLinks の伏字化、許可リスト外のリンクの除去（SafeLinks は実 URL に復号して再判定）。
-- マニフェストの `learnMcp` は `"available"`（Learn MCP を使用）/ `"fallbackGet"`（Learn MCP が使えず、`learn.microsoft.com` の検索 API への直接 GET で補完）/ `"unavailable"` / `"notUsed"` のいずれかが必須で、欠落・その他の値のシャードは全投稿を失敗にする。`"available"` / `"fallbackGet"` 以外のシャードに Learn 補完のリンク（`source=LearnSearch`）や `remediationStatus=supplementedByLearn` があれば、リンクを除外して `notFound` に戻す（警告を記録。報告上の Learn MCP の可否と矛盾させない）。`"fallbackGet"` のシャードは Learn 補完のリンクだけを残し、`supplementedByLearn` は `notFound` に戻す（直接 GET は検索結果だけでページ本文を読まないため、手順の補完は Learn MCP に限る）。`source=LearnSearch` のリンクは、ホストが `learn.microsoft.com` でなければ除外する。MRC MCP が `不可` の実行（オフラインワーカー）では、`learnMcp` は値によらず `notUsed` とみなす。
-- マニフェストの `learnIncomplete`（真偽値または `"true"` / `"false"`）は、補完が必要なイベントのうち Learn MCP で処理できなかったもの（直接 GET へのフォールバック・補完不可）があるかを表す。`learnMcp` はバッチで 1 つの値（Learn MCP 優先）なので、同じバッチ内で Learn MCP とフォールバックが混在したことはこのフラグで表す。`learnMcp="available"` で欠落・不正なら警告付きで `true` とみなす（完全な補完として報告しない）。`fallbackGet` / `unavailable` は常に `true`、`notUsed` とオフライン実行は常に `false` として扱う。
-- 収集能力 `capabilities.learnMcp` は、**最終的に受理された投稿を返したバッチ**（再委譲で置き換えられた試行は除く）の `learnMcp` から決める: `available` があれば `利用可`、無く `fallbackGet` があれば `不可（直接取得で補完）`、無く `unavailable` があれば `不可`、いずれも無ければ `未使用`。それらのバッチに `fallbackGet` / `unavailable` が 1 つでもあるか、`learnIncomplete=true` のバッチがあれば、`collectionPlan` の `Remediation:learnSupplement` は `downgraded`（一部の補完が Learn MCP によらず、上限付き・リンクのみ、または補完なし）とする。
+- マニフェストの `learnMcp` は `"available"`（Learn MCP を使用）/ `"unavailable"`（補完が必要なイベントがあったが Learn MCP を使えなかった）/ `"notUsed"` のいずれかが必須で、欠落・その他の値（旧仕様の `"fallbackGet"` を含む。ワーカーは Learn を GET しない）のシャードは全投稿を失敗にする。`"available"` 以外のシャードに Learn 補完のリンク（`source=LearnSearch`）や `remediationStatus=supplementedByLearn` があれば、リンクを除外して `notFound` に戻す（警告を記録。報告上の Learn MCP の可否と矛盾させない）。`source=LearnSearch` のリンクは、ホストが `learn.microsoft.com` でなければ除外する。MRC MCP が `不可` の実行（オフラインワーカー）では、`learnMcp` は値によらず `notUsed` とみなす。
+- イベントの `learnRequest`（`{ "query", "keyTerms" }`）は、Learn MCP で処理できなかったイベントの検索依頼。`query` / `keyTerms` が空・不正なもの、リンクが 1 件でもあるイベントのもの、`learnMcp="notUsed"` のシャード・オフライン実行のものは除外する（警告を記録）。残った依頼が 1 件でもある `available` のシャードは `learnIncomplete=true` とみなす。
+- マニフェストの `learnIncomplete`（真偽値または `"true"` / `"false"`）は、補完が必要なイベントのうち Learn MCP で処理できなかったもの（`learnRequest` を書いたもの）があるかを表す。`learnMcp` はバッチで 1 つの値（Learn MCP 優先）なので、同じバッチ内で Learn MCP の成功と失敗が混在したことはこのフラグで表す。`learnMcp="available"` で欠落・不正なら警告付きで `true` とみなす（完全な補完として報告しない）。`unavailable` は常に `true`、`notUsed` とオフライン実行は常に `false` として扱う。
+- 収集能力 `capabilities.learnMcp` は、**最終的に受理された投稿を返したバッチ**（再委譲で置き換えられた試行は除く）の `learnMcp` から決める: `available` があれば `利用可`、無く `unavailable` があれば `不可`、いずれも無ければ `未使用`（`不可` は、`learn-fallback` が Learn 検索 API から応答を得ると `不可（直接取得で補完）` になる）。それらのバッチに `unavailable` が 1 つでもあるか、`learnIncomplete=true` のバッチがあれば、`collectionPlan` の `Remediation:learnSupplement` は `downgraded`（一部の補完が Learn MCP によらず、ツールの逐次検索によるリンクのみ、または補完なし）とする。
+- G2 の確定時に、受理済みイベントの `learnRequest` を `learnFallback.items` に集める。1 件以上あれば `next` は `learn-fallback`（未処理のまま `merge` は実行できない）、無ければ `merge`。
+
+## Learn 検索の代行（`learn-fallback`）
+
+並列ワーカーがそれぞれ `learn.microsoft.com` を GET すると、ワーカー間で直列化できず Learn のレート制限（HTTP 429 `Too Many Requests`）に当たる。そこでワーカーは Learn を GET せず、Learn MCP で補完できなかったイベントの検索依頼（`learnRequest`）だけを返し、このサブコマンドが全バッチ完了後（`collected`）に一括で照会する。
+
+- 宛先は `https://learn.microsoft.com/api/search?search=<query>&locale=en-us&$top=5` だけ（ホスト・パス固定・リダイレクトを辿らない・タイムアウト・応答サイズ上限・JSON 以外は拒否）。
+- **逐次**（並行しない）・**検索の間隔 2 秒以上**・同じ `query` は 1 回だけ照会・**1 回の実行で最大 30 検索**（超えた依頼は `capped`）。
+- HTTP 429 は `Retry-After`（秒。無い・日付形式なら 10 秒、上限 60 秒）だけ待って最大 2 回再試行する。それでも 429、または接続エラー・5xx なら**以後の照会をすべて中止**する（残りは `stopped`）。その他の 4xx はその依頼だけ `noMatch`。
+- 採用するのは、URL のホストが `learn.microsoft.com` で、タイトル / 説明に `keyTerms` のいずれかとリタイア関連語（retire / deprecat / end of support / end of life / migrat / sunset）を含む結果だけ（イベントあたり最大 2 件・`source=LearnSearch`・`learnQuery` 付き）。**リンクを追加するだけ**で、`remediationStatus` / `remediationJa` は変えない。
+- 応答を 1 件でも得たら `capabilities.learnMcp` を `不可（直接取得で補完）` にする（`利用可` のときは変えない）。結果は `collectionPlan` の `Remediation:learnSupplement` の `note` に件数（リンク追加・該当なし・未照会）として残る。
+- `stopped` / `capped` が残っても `merge` に進める。時間を置いて `learn-fallback` を再実行すると、残りの依頼だけを照会する（`merge` 前に限る）。
 - `sameEventAs` は、参照先が実在し（同じシャード内のイベントか、渡した参照投稿のイベント）、**同じ重複候補グループ**に属し、**根拠（`evidence`）が空でない**場合だけ残す。満たさなければ統合候補から外し、警告として記録する（無関係な投稿の誤統合を防ぐ）。参照先が**同じシャード内で検証に失敗した投稿**の場合は、その投稿が再委譲されるため外さずに残し、`merge` で参照先が受理済みのときだけ統合する（再試行上限に達したら統合されない）。
 - 失敗した投稿**だけ**を再委譲バッチ `B<NN>-r<n>`（シャード `batch-<NN>-r<n>.json`・既存シャードは上書きしない）にまとめる。試行は**投稿ごとに最大 3 回**。3 回失敗した投稿は `ledger.failedNoticeIds`（`retriesExhausted`）になり、処理は続行する。
 - 受理した抽出結果は `.work/accepted.json`（投稿ごとに唯一の有効結果）に保存する。
@@ -111,7 +125,7 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 
 ## 安全性
 
-- **ネットワーク**: `https://www.microsoft.com/releasecommunications/api/v2/azure`（一覧）と `.../azure/<id>`（MRC MCP が不可の実行での本文）への GET だけ（オリジン固定・リダイレクトを辿らない・タイムアウト・応答サイズ上限・JSON 以外は拒否）。取得データ中の URL には一切アクセスしない。
+- **ネットワーク**: `https://www.microsoft.com/releasecommunications/api/v2/azure`（一覧）と `.../azure/<id>`（MRC MCP が不可の実行での本文）、`learn-fallback` での `https://learn.microsoft.com/api/search`（逐次・上限付き）への GET だけ（宛先固定・リダイレクトを辿らない・タイムアウト・応答サイズ上限・JSON 以外は拒否）。取得データ中の URL には一切アクセスしない。
 - **ファイル**: 書き込みは `usecases/005-azure-retirement-report/reports/<run>/` 配下のみ（フォルダ名の形式・リンク / ジャンクションを検査）。`.work/` の削除は `finalize` だけが行う。
 - **取得データ**: タイトル・本文・ワーカーの抽出結果はすべて外部データとして扱い、描画は単一パスの置換（差し込んだデータを再走査しない）とシンク別エスケープで行う。
 - Azure リソース・サブスクリプションへはアクセスしない。
@@ -122,5 +136,5 @@ python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコ�
 python -m unittest discover -s usecases/005-azure-retirement-report/tools/tests -v
 ```
 
-- テストは合成データのみを使い、ネットワークを使わない（公開 API をフェイクに差し替える）。テスト用の実行フォルダは `reports/` 配下に作って終了時に削除する。
+- テストは合成データのみを使い、ネットワークを使わない（公開 API と Learn 検索 API をフェイクに差し替える。待機も差し替える）。テスト用の実行フォルダは `reports/` 配下に作って終了時に削除する。
 - テンプレート（`index.html`）のロジック用 `<script>` を変更したら、CSP の `sha256-…` を更新する（検証ゲート 4c が不一致を検出する）。

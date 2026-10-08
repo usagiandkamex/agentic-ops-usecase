@@ -38,5 +38,5 @@ user-invocable: false
    - `retireDate.evidence`（`source=description` のとき）・`flagEvidence.*`（`"true"` / `"false"` のとき）・`sameEventAs.evidence` は、**`bodyText` の英語原文をそのまま抜き出す**（翻訳・要約・言い換えをしない。200 文字以内に収まるよう文の一部を切り出してよい）。本文に見つからない根拠の値は、ツールが `unknown`（日付・フラグ）に下げるか統合候補から外す。
    - `referenceLinks[].url` は `bodyText` 中の `[URL]` に書かれた URL だけを使い（`source="Description"`）、Learn 補完はしない（`remediationStatus` に `supplementedByLearn` を使わない）。本文に無い URL はツールが除外する。
    - 参照投稿（`referenceNotices[]`）の本文は渡されない。同一判定は参照投稿の `title` / `events[]`（対象・リタイア日）と、自分の投稿の本文の明記（「〜の日付を延長」「〜のリマインダー」等）だけで行い、確信が持てなければ `sameEventAs=null`。
-4. シャードを [`005-retirement-summarizer.agent.md` の「シャード形式」](./005-retirement-summarizer.agent.md) で `create_file` し、`read` で読み直して JSON として正しいこと、`expectedNoticeIds` = `returnedNoticeIds` ∪ `failedNoticeIds.id` であることを確認する。マニフェストの `learnMcp` は `"notUsed"`、`learnIncomplete` は `false`。
+4. シャードを [`005-retirement-summarizer.agent.md` の「シャード形式」](./005-retirement-summarizer.agent.md) で `create_file` し、`read` で読み直して JSON として正しいこと、`expectedNoticeIds` = `returnedNoticeIds` ∪ `failedNoticeIds.id` であることを確認する。マニフェストの `learnMcp` は `"notUsed"`、`learnIncomplete` は `false`、各イベントの `learnRequest` は `null`。
 5. マニフェストを返す（形式は `005-retirement-summarizer.agent.md` の「返却」と同じ）。
