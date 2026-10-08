@@ -51,7 +51,8 @@ agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure
 ### R2. 決定論処理は同梱ツールだけで行う（新しいスクリプトを作らない）
 
 - **端末で実行してよいのは `python usecases/005-azure-retirement-report/tools/retirement_tool.py <サブコマンド>` だけ**（リポジトリのルートで実行する）。
-- **Python / PowerShell / JavaScript 等の新しいスクリプトやインラインコード（`python -c` / ヒアドキュメント / `Invoke-RestMethod` 等）を書かない・実行しない**。`findings.json` / `progress.md` / HTML / CSV / `.work/` 配下を**編集ツールで直接書き換えない**（書き手はツールだけ。例外はワーカーのシャードのみ）。
+- **Python / PowerShell / JavaScript 等の新しいスクリプトやインラインコード（`python -c` / ヒアドキュメント / `Invoke-RestMethod` 等）を書かない・実行しない**。`findings.json` / `progress.md` / HTML / CSV / `.work/` 配下を**編集ツールで直接書き換えない**（書き手はツール。例外は次の 3 つだけ: ワーカーが自分のシャードを書く／あなたが総評を `<reportFolder>/.work/highlight.txt` に書く／あなたがレビュー要約を `<reportFolder>/.work/review-note.txt` に書く。いずれもツールが読み取って検証し、記録後に削除する）。
+- **総評・レビュー要約などレポート由来の自由記述をコマンドラインの引数に入れない**（シェル解析によるコマンド注入を防ぐ。サブコマンドは `--text` / `--note` を受け付けない）。上の 2 ファイルに編集ツールで書いてから、`--run`（と `--result`）だけでサブコマンドを実行する。
 - ツールが不合格（終了コード 1）やエラー（2 / 3）を返したら、出力の `error` / `failures` / `next` を読み、**ツールの指示に従って再実行する**。ツールの出力を回避するために手で JSON を直さない。
 - **件数が多いことは停止理由にならない**。候補が数百件でも、ワーカーの wave を繰り返せば完走できる（統合・描画はツールが一括で行う）。
 
@@ -136,14 +137,14 @@ agents: [azure-retirement-summarizer, azure-retirement-summarizer-offline, azure
 
 1. `<TOOL> merge --run <run>`: `sameEventAs` によるイベント統合（バッチをまたぐ参照を含む・保守的な統合規則）、範囲の最終判定、影響度（重大度 S × 緊急度 U の決定論ルール）、`summary` / `byCategory` / `byQuarter` / `ledger` / `collectionPlan` を `findings.json` に書き、**G3** を自動検証する。
 2. **総評（あなたが執筆）**: `merge` の出力（`summary` と `highlightFacts`）の事実だけを使い、2〜4 文の日本語で書く（例: High 件数と主な対象、90 日以内の件数、要確認の件数）。本文の文言をそのまま貼らない。山括弧・メールアドレス・URL を含めない。
-3. `<TOOL> set-highlight --run <run> --text "<総評>"` で記録する。
+3. 総評を編集ツールで `<reportFolder>/.work/highlight.txt`（UTF-8 のプレーンテキスト・総評だけ）に書き、`<TOOL> set-highlight --run <run>` で記録する（ツールがファイルを読み、長さ・山括弧・プレースホルダ・メールアドレス等を検査して `findings.json` に反映し、ファイルを削除する）。拒否されたら出力の `errors` に従って `highlight.txt` を書き直して再実行する。
 
 ### 手順 7. レポート生成（report-writer 委譲）・G4・独立レビュー
 
 - `azure-retirement-report-writer` に `run`（フォルダ名）と `reportFolder`（絶対パス）を渡す。writer は `render`（描画＋ G4）を実行し、生成物を読み直して独立レビューを行い、`{ gates, review: { result, findings } }` を返す。
 - **G4 が不合格**（writer が `render` の失敗とゲート名を返した）の場合: `record-review` は受け付けられない。`<TOOL> status --run <run>` で不合格のゲート名と次の操作（`render` の再実行）を確認し、writer に再委譲する。同じゲートで 2 回続けて不合格ならハードブロッカーとして、ゲート名と `status` の出力を利用者に示して停止する（手でファイルを直さない）。
-- G4 合格後、`<TOOL> record-review --run <run> --result pass|fail --note "<要約>"` で結果を記録する。
-  - `fail`（内容の矛盾など）: 指摘が総評ならば `set-highlight` からやり直す。データの誤りならば `status` と指摘を利用者に示してハードブロッカーとして停止する（手で `findings.json` を直さない）。
+- G4 合格後、`<TOOL> record-review --run <run> --result pass|fail` で結果を記録する。要約を残す場合は、先に編集ツールで `<reportFolder>/.work/review-note.txt`（UTF-8 のプレーンテキスト・任意）に書く（ツールが読み取って記録し、ファイルを削除する）。
+  - `fail`（内容の矛盾など）: 指摘が総評ならば `highlight.txt` を書き直して `set-highlight` からやり直す。データの誤りならば `status` と指摘を利用者に示してハードブロッカーとして停止する（手で `findings.json` を直さない）。
 
 ### 手順 8. 完了報告
 

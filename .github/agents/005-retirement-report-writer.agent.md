@@ -51,7 +51,7 @@ user-invocable: false
   "review": { "result": "pass|fail", "findings": ["<指摘（eventId と項目名で示し、値そのものは最小限）>"] } }
 ```
 
-- 指摘が総評だけなら、親は総評を書き直して `set-highlight` → 再委譲する。データの誤りなら親が利用者に報告する。
+- 指摘が総評だけなら、親は総評を `.work/highlight.txt` に書き直して `set-highlight` → 再委譲する。データの誤りなら親が利用者に報告する。
 
 ## 参照
 

@@ -63,6 +63,19 @@ def _prefetched_bodies(run: Path, b: dict) -> dict:
     return out
 
 
+def _drop_learn_outputs(rec: dict, learn: str, warnings: list[str]) -> None:
+    """A shard that did not use Learn MCP must not carry Learn-derived links or remediation."""
+    for e in rec["events"]:
+        k = e["eventKey"]
+        kept = [l for l in e["referenceLinks"] if l["source"] != "LearnSearch"]
+        if len(kept) != len(e["referenceLinks"]):
+            warnings.append(f"{k}: learnMcp={learn} のため Learn 補完のリンクを除外した")
+            e["referenceLinks"] = kept
+        if e["remediationStatus"] == "supplementedByLearn":
+            warnings.append(f"{k}: learnMcp={learn} のため remediationStatus を notFound にした")
+            e["remediationStatus"], e["remediationJa"] = "notFound", []
+
+
 def enforce_body_provenance(rec: dict, body: dict, warnings: list[str]) -> None:
     """The offline worker may only report facts found in the tool-fetched body; anything else is weakened."""
     text = body.get("text") or ""
@@ -313,7 +326,10 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
             raise ShardError("returned ∪ failed != assigned (or overlap)")
         if set(note_ids) != set(ret):
             raise ShardError("notices[] ids != returnedNoticeIds")
-        learn = sh.get("learnMcp") if sh.get("learnMcp") in ("available", "unavailable", "notUsed") else None
+        learn = sh.get("learnMcp")
+        if learn not in LEARN_VALUES:
+            # Required manifest field: it decides the run's Learn provenance, so a missing / invalid value is malformed.
+            raise ShardError('learnMcp must be "available", "unavailable" or "notUsed"')
         if api_mode and learn != "notUsed":
             # The offline worker profile has no Learn MCP; any other claim is not trusted.
             warnings.append(f"learnMcp={learn} は MRC MCP 不可の実行（オフラインワーカー）では使えないため notUsed とした")
@@ -334,6 +350,8 @@ def check_batch(run: Path, st: dict, b: dict, meta: dict, accepted: dict) -> tup
                                   required_via="ReleaseCommunicationsApi" if api_mode else None)
             if api_mode:
                 enforce_body_provenance(rec, bodies.get(nid, {}), warnings)
+            elif learn != "available":
+                _drop_learn_outputs(rec, learn, warnings)
             rec["batchId"] = b["batchId"]
             ok[nid] = rec
         except ShardError as ex:

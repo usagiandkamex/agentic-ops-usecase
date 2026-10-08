@@ -815,8 +815,33 @@ class ReviewRegressions(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def shard(self, obj):
+        obj = {"learnMcp": "notUsed", **obj}
         (self.tmp / ".work" / "batch-01.json").write_text(json.dumps(obj), encoding="utf-8")
         return shards.check_batch(self.tmp, self.st, self.b, self.meta, {})
+
+    def test_learn_mcp_manifest_is_required_and_consistent(self):
+        ids = ["a", "b", "c", "d"]
+        base = {"batchId": "B01", "expectedNoticeIds": ids, "returnedNoticeIds": ids, "failedNoticeIds": [],
+                "notices": [self.n(i) for i in ids]}
+        for bad in (None, "", "yes", "Available"):
+            ok, fail, _, _ = self.shard(dict(base, learnMcp=bad))
+            self.assertEqual(ok, {})
+            self.assertTrue(all("learnMcp" in v for v in fail.values()))
+        learned = self.n("a")
+        learned["events"][0]["referenceLinks"] = [{"titleJa": "d", "url": "https://learn.microsoft.com/azure/foo", "source": "Description"},
+                                                  {"titleJa": "l", "url": "https://learn.microsoft.com/azure/bar", "source": "LearnSearch"}]
+        learned["events"][0]["remediationStatus"] = "supplementedByLearn"
+        notices = [learned] + [self.n(i) for i in ids[1:]]
+        ok, fail, warn, learn = self.shard(dict(base, notices=notices, learnMcp="notUsed"))
+        self.assertFalse(fail)
+        e = ok["a"]["events"][0]
+        self.assertEqual([l["source"] for l in e["referenceLinks"]], ["Description"])
+        self.assertEqual((e["remediationStatus"], e["remediationJa"], learn), ("notFound", [], "notUsed"))
+        self.assertEqual(len(warn), 2)
+        ok, _, warn, learn = self.shard(dict(base, notices=notices, learnMcp="available"))
+        e = ok["a"]["events"][0]
+        self.assertEqual((len(e["referenceLinks"]), e["remediationStatus"], learn), (2, "supplementedByLearn", "available"))
+        self.assertFalse(warn)
 
     def n(self, i, same=None):
         return {"id": i, "fetchStatus": "ok", "fetchedVia": "MRC MCP", "titleJa": "x", "events": [ev(i, "2027-01-01", same=same)]}
