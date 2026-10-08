@@ -1,5 +1,5 @@
 {
-  "_comment": "ユースケース005 Azure リタイア情報レポートの中核成果物（単一のデータ源）。オーケストレーター(azure-retirement-analyst)が手順4で作成し、手順6で統合・判定を確定する。ワーカー(azure-retirement-summarizer)は .work/batch-<NN>.json を書くだけで本ファイルを書かない。report-writer は本ファイルを読み取り専用で描画する。このテンプレは参照元（スキーマ例）。実値に置換し、配列は実データ件数だけ複製する。BOM 不要。reports/<YYYYMMDD-HHmmss>/findings.json はローカル限定（.gitignore 済み）。",
+  "_comment": "ユースケース005 Azure リタイア情報レポートの中核成果物（単一のデータ源）。同梱ツール(tools/retirement_tool.py)が plan-batches で骨組みを作り、merge で統合・判定を確定し、set-highlight で総評を書く。ワーカー(azure-retirement-summarizer)は .work/batch-<NN>.json を書くだけで本ファイルを書かない。render は本ファイルを読み取り専用で描画する。このテンプレは参照元（スキーマ例）。エージェントは本ファイルを手で書き換えない。BOM 不要。reports/<YYYYMMDD-HHmmss>/findings.json はローカル限定（.gitignore 済み）。",
   "metadata": {
     "generatedAt": "{{META_DATETIME}}",
     "asOfDate": "{{AS_OF_DATE}}",
@@ -22,7 +22,9 @@
       "releaseCommunicationsApi": "利用可|不可|未使用",
       "learnMcp": "利用可|不可|未使用|未判定"
     },
-    "reportFolder": "usecases/005-azure-retirement-report/reports/<YYYYMMDD-HHmmss>/"
+    "reportFolder": "usecases/005-azure-retirement-report/reports/<YYYYMMDD-HHmmss>/",
+    "toolVersion": "<retirement_tool.py のバージョン>",
+    "snapshotId": "<候補一覧のスナップショット ID（id と modified のハッシュ）>"
   },
   "ledger": {
     "_comment": "収集の完全性台帳。各段階の ID 件数を記録し、欠落・重複・取りこぼしを検出する。",
@@ -41,7 +43,7 @@
     },
     "candidateNoticeIds": [],
     "prefilter": {
-      "_comment": "候補 = 年フィルタ内の全件 ∪ 補集合のうちタイトル・本文に Y（prefilterStartYear）以上の西暦（20xx）を含む投稿。除外は範囲内のリタイア日を持ち得ない投稿だけ（件数のみ記録・補集合クエリと本ルールで再現可能）。screenStatus ごとの等式はオーケストレーター定義の手順 4-4。",
+      "_comment": "候補 = 年フィルタ内の全件 ∪ 補集合のうちタイトル・本文に Y（prefilterStartYear）以上の西暦（20xx）を含む投稿。除外は範囲内のリタイア日を持ち得ない投稿だけ（件数のみ記録・補集合クエリと本ルールで再現可能）。screenStatus ごとの等式は tools/README.md の「列挙と事前絞り込み」。",
       "screenStatus": "done|notNeeded|unavailable|fallbackAll",
       "screenedCount": 0,
       "bodyYearMatchedNoticeIds": [],
@@ -68,7 +70,7 @@
     "statusHighlight": ""
   },
   "impactRule": {
-    "_comment": "影響度の決定論ルール（オーケストレーターが適用。テンプレの値を変更しない）。",
+    "_comment": "影響度の決定論ルール（同梱ツールの merge が適用。テンプレの値を変更しない）。",
     "severity": {
       "S3": "flags.workloadStop=true または flags.dataLossRisk=true",
       "S1": "flags.autoMigration=true かつ workloadStop・dataLossRisk のいずれも true でない",

@@ -10,8 +10,8 @@ agent: 'azure-retirement-analyst'
 
 ## 収集する情報（公開情報の READ のみ）
 
-- **主**: Microsoft Release Communications（MRC）MCP の `get_recent_azure_updates` / `get_azure_update_by_id`（Retirements タグで絞り込み）。
-- **副**: [Azure の更新情報](https://azure.microsoft.com/ja-jp/updates/) と同一データ源の公開 API（MCP 不可時・件数照合用）。
+- **列挙・件数照合**: [Azure の更新情報](https://azure.microsoft.com/ja-jp/updates/) と同一データ源の公開 API（同梱ツールが HTTPS GET で取得）。
+- **本文の取得**: Microsoft Release Communications（MRC）MCP の `get_azure_update_by_id`（不可なら公開 API）。
 - **対応策の補完**: 本文に公式リンクが無い場合のみ Microsoft Learn MCP。
 - 収集範囲は実行時に選択する（既定: **今後予定のすべて＋直近 3 か月にリタイア済み**／今後のみ／今後 12 か月／全件／カスタム）。
 
@@ -24,7 +24,7 @@ agent: 'azure-retirement-analyst'
 影響度は **重大度 S（停止 / データ消失 / 自動移行の明記）× 緊急度 U（残日数）** の決定論ルールで High / Medium / Low / 要確認を付与します。リタイア日は正確な日付を捏造せず、月のみ判明の場合は「月のみ」と明示します。
 対応策は本文の「Required action」等を日本語で要約し、記載が無ければ「要確認」とします（手順を創作しない）。
 
-成果物は `report-template/*` を `read_file` で読み、`findings.json` の実データで置換して生成します（生成スクリプトを作らない）。保存先は `usecases/005-azure-retirement-report/reports/<YYYYMMDD-HHmmss>/`（ローカル限定・コミットしない）。
+列挙・バッチ化・統合・影響度判定・HTML / CSV の描画・検証ゲートは、同梱ツール [`retirement_tool.py`](../../usecases/005-azure-retirement-report/tools/README.md) のサブコマンドで決定論的に行います（新しいスクリプトは作らない）。件数が多くても途中で止めず、ツールの `next` に従って最後まで進めてください。中断した場合は `status` で再開できます。保存先は `usecases/005-azure-retirement-report/reports/<YYYYMMDD-HHmmss>/`（ローカル限定・コミットしない）。
 
 ## 注意
 
