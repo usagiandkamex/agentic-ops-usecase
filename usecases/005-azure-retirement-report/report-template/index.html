@@ -63,6 +63,15 @@
   th button.sort[data-dir=desc]::after{content:" \2193";opacity:1}
   tr:last-child td{border-bottom:none}
   td.nowrap{white-space:nowrap}
+  .table-scroll{overflow-x:auto;margin:6px 0 20px}
+  .table-scroll table{margin:0}
+  #ret-table{table-layout:fixed;min-width:1120px}
+  #ret-table col:nth-child(1){width:12%}#ret-table col:nth-child(2){width:7%}#ret-table col:nth-child(3){width:8%}#ret-table col:nth-child(4){width:11%}
+  #ret-table col:nth-child(5){width:31%}#ret-table col:nth-child(6){width:10%}#ret-table col:nth-child(7){width:21%}
+  #ret-table td{overflow-wrap:anywhere}
+  #ret-table td:nth-child(1),#ret-table td:nth-child(2),#ret-table td:nth-child(3){white-space:normal}
+  #ret-table td:nth-child(1) .ttl{white-space:nowrap}
+  th button.sort{white-space:nowrap}
   .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#fff;white-space:nowrap}
   .imp-High{background:var(--bad)}.imp-Medium{background:var(--warn);color:#201f1e}.imp-Low{background:var(--good)}.imp-NeedsReview{background:var(--rev)}
   .badge{display:inline-block;padding:0 6px;margin:2px 4px 0 0;border-radius:4px;font-size:11px;border:1px solid var(--bd);background:#f3f2f1;color:var(--sub);white-space:nowrap}
@@ -143,12 +152,15 @@
     <button type="button" id="f-reset">リセット</button>
     <span id="f-count" class="count"></span>
   </div>
+  <div class="table-scroll">
   <table id="ret-table">
+    <colgroup><col><col><col><col><col><col><col></colgroup>
     <thead><tr><th aria-sort="none"><button type="button" class="sort" data-sort="date">リタイア日</button></th><th aria-sort="none"><button type="button" class="sort" data-sort="days">残日数</button></th><th aria-sort="none"><button type="button" class="sort" data-sort="impact">影響度</button></th><th aria-sort="none"><button type="button" class="sort" data-sort="category">カテゴリ / 製品</button></th><th aria-sort="none"><button type="button" class="sort" data-sort="title">内容</button></th><th>影響種別</th><th>対応策</th></tr></thead>
     <tbody id="ret-body">
       <tr><td colspan="7" class="empty">一覧を表示するには JavaScript を有効にするか、retirements.csv を参照してください。</td></tr>
     </tbody>
   </table>
+  </div>
   <p class="note">フィルタはカテゴリ・製品・影響度・時期・キーワードの<strong>すべてを満たす</strong>行を表示する（影響度のチェックはいずれかに一致）。複数カテゴリ / 製品に属するイベントは、いずれかに一致すれば表示する。残日数は基準日から算出し、月精度（「月のみ」）の場合は月初基準の保守的な値。列見出しをクリックすると並べ替えできる。全件の機械可読データは <a href="retirements.csv">retirements.csv</a>。</p>
   <script type="application/json" id="retirement-data">{{EVENTS_JSON}}</script>
 
